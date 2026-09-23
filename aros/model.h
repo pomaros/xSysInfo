@@ -72,7 +72,7 @@ typedef struct {
     int freelist_known;         /* 0: the free list was not walked, both unknown */
 } xsi_memregion;
 
-#define XSI_MAX_REGIONS 32
+#define XSI_MAX_REGIONS 256     /* the M1 has 137 MemHeaders */
 
 typedef enum {
     XSI_VOL_OK,
