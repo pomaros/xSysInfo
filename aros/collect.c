@@ -314,6 +314,9 @@ static void collect_volumes(xsi_model *m)
         if (Info(lock, info)) {
             v->has_info = 1;
             v->block_size = (uint32_t)info->id_BytesPerBlock;
+            /* InfoData64 (__DOS64) has UQUAD counts; this path is for LONG. */
+            _Static_assert(sizeof info->id_NumBlocks == 4 && sizeof info->id_NumBlocksUsed == 4,
+                           "InfoData block counts are not 32-bit: widen without xsi_block_count");
             v->total_blocks = xsi_block_count((int32_t)info->id_NumBlocks);
             v->used_blocks = xsi_block_count((int32_t)info->id_NumBlocksUsed);
             v->dos_type = (uint32_t)info->id_DiskType;
