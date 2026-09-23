@@ -87,7 +87,7 @@ static void collect_system(xsi_model *m, const char *architecture)
         };
         ArosInquireA(tags);
         if (version)
-            xsi_set(m, S, "os.aros", "AROS", "aros.library", "version %lu, release %lu.%lu",
+            xsi_set(m, S, "os.aros", "AROS", "aros.library", "%lu (release %lu.%lu)",
                     (unsigned long)version, (unsigned long)major, (unsigned long)minor);
         else
             xsi_missing(m, S, "os.aros", "AROS", XSI_UNKNOWN, "aros.library");

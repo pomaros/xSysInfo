@@ -101,7 +101,7 @@ counted as a runtime result.
 | Profile | Build | Launch | Report | GUI | Evidence |
 |---|---|---|---|---|---|
 | apple | PASS | not run | not run | not run | on-target run pending, operated by Codex |
-| macaros | PASS | not run | not run | not run | — |
+| macaros | PASS | PASS | PASS: BRIEF, FULL TO file, WHICH refused with rc 5 | PASS: cycles, Memory, Drives, Print, Quit, DARK | `aros-ctl` run on the M5, integration repo `artifacts/runs/20260923-xsysinfo-macaros/` |
 | raspi | PASS | not run | not run | not run | — |
 | host tests | PASS, 48 checks | — | — | — | `make -C aros/test` |
 
@@ -113,6 +113,14 @@ and palettes. The build links only the AROS SDK link libraries. None of
 upstream's third-party parts is used: identify, flexcat, TinySetPatch,
 MMULib, openpci and the Dhrystone sources. The Apple core part names are
 facts taken from public documentation; no code was copied.
+
+## AROS findings
+
+- `aros/inquire.h` documents the `AI_Aros*` results as ULONG, but
+  `ArosInquireA()` stores an IPTR for each of them. On a 64-bit AROS, a ULONG
+  destination is overwritten by eight bytes. This build passes IPTR.
+- processor.resource on hosted AArch64 answers the model string `Unknown`
+  and no clock speed.
 
 ## OS interfaces this build lacks
 
