@@ -100,7 +100,7 @@ counted as a runtime result.
 
 | Profile | Build | Launch | Report | GUI | Evidence |
 |---|---|---|---|---|---|
-| apple | PASS | not run | not run | not run | on-target run pending, operated by Codex |
+| apple | PASS | PASS | PASS: BRIEF, FULL, WHICH refused with rc 5, Print; all 137 regions | PASS: Memory, Drives, Resources, Platform, Print | M1 J313 at 1fd3061, 63/63 checks after reboot and read-only FAT capture, integration repo `artifacts/runs/20260923-xsysinfo/result.json` |
 | macaros | PASS | PASS | PASS: BRIEF, FULL TO file, WHICH refused with rc 5 | PASS: cycles, Memory, Drives, Print, Quit, DARK | `aros-ctl` run on the M5, integration repo `artifacts/runs/20260923-xsysinfo-macaros/` |
 | raspi | PASS | not run | not run | not run | — |
 | host tests | PASS, 48 checks | — | — | — | `make -C aros/test` |
