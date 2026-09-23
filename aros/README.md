@@ -127,8 +127,11 @@ facts taken from public documentation; no code was copied.
 These values are unavailable because no interface exists for applications, not
 because of this program. Each would be a small, separately scoped OS change:
 
-- **Apple.** Temperatures and battery. smc.resource has key reads, but
-  application use needs a read-only, allow-listed sensor interface.
+- **Apple.** Temperatures and battery. The kernel's privileged desktop proof
+  reads SMC keys (charge, battery temperature and voltage, adapter) through
+  smc.resource, but there is no bounded, cached, read-only query for
+  applications, and a second SMC client must not be started. xSysInfo reports
+  these as unavailable until such a query exists.
   Per-cluster core topology. Whether each driver passed its own self-test,
   as distinct from being loaded.
 - **Pi.** Board model, revision and memory split from the firmware mailbox

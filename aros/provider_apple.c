@@ -115,7 +115,7 @@ int xsi_provider_apple(xsi_model *m, const char *architecture)
         xsi_missing(m, P, "drivers.loaded", "Driver resources", XSI_UNKNOWN, "exec ResourceList");
 
     /* Optional capabilities with no public read interface yet. */
-    xsi_missing(m, P, "sensor.temperature", "Temperature", XSI_UNAVAILABLE, "no OS API");
-    xsi_missing(m, P, "power.battery", "Battery", XSI_UNAVAILABLE, "no OS API");
+    xsi_missing(m, P, "sensor.temperature", "Temperature", XSI_UNAVAILABLE, "no application API");
+    xsi_missing(m, P, "power.battery", "Battery", XSI_UNAVAILABLE, "no application API");
     return 1;
 }

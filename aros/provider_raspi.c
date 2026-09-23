@@ -34,9 +34,9 @@ int xsi_provider_raspi(xsi_model *m, const char *architecture)
                 xsi_format_address((uint64_t)base, m->pointer_bits, text, sizeof text));
     else
         xsi_missing(m, P, "soc.peripherals", "Peripheral base", XSI_UNKNOWN, "kernel.resource");
-    xsi_missing(m, P, "board.model", "Board", XSI_UNAVAILABLE, "no OS API (firmware mailbox)");
+    xsi_missing(m, P, "board.model", "Board", XSI_UNAVAILABLE, "no application API (firmware mailbox)");
     xsi_missing(m, P, "board.revision", "Board revision", XSI_UNAVAILABLE,
-                "no OS API (firmware mailbox)");
-    xsi_missing(m, P, "sensor.temperature", "Temperature", XSI_UNAVAILABLE, "no OS API");
+                "no application API (firmware mailbox)");
+    xsi_missing(m, P, "sensor.temperature", "Temperature", XSI_UNAVAILABLE, "no application API");
     return 1;
 }
