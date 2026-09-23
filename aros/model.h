@@ -48,6 +48,7 @@ typedef struct {
     char name[XSI_NAME_LEN];
     uint64_t address;
     uint16_t version, revision;
+    int has_version;            /* 0: the node is not known to be a Library */
     int8_t priority;
 } xsi_module;
 

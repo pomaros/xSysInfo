@@ -40,7 +40,8 @@ int xsi_provider_hosted(xsi_model *m, const char *architecture)
     m->platform = XSI_PLATFORM_HOSTED;
     m->platform_name = "hosted";
     xsi_set(m, P, "platform.kind", "Platform", hostlib ? "hostlib.resource" : "kernel.resource",
-            "hosted AROS, the host owns the hardware");
+            "hosted AROS");
+    xsi_set(m, P, "platform.owner", "Hardware owner", "kernel.resource", "the host OS");
     if (family)
         xsi_set(m, P, "host.family", "Host", "kernel.resource", "%s", family);
     else

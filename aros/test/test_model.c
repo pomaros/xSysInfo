@@ -141,7 +141,8 @@ static void test_report_high_memory(void)
     CHECK(strstr(text, "0x00000008_00000000 - 0x0000000b_df6c4000") != NULL, "range:\n%s", text);
     CHECK(strstr(text, "size       15.4 GB, free 11.7 GB, largest [unknown]") != NULL, "sizes:\n%s", text);
     CHECK(strstr(text, "12.0 GB used of 20.0 GB, 4096-byte blocks") != NULL, "volume:\n%s", text);
-    CHECK(strstr(text, "kernel.resource                  0x00000008_16348000") != NULL, "module:\n%s", text);
+    CHECK(strstr(text, "kernel.resource                  0x00000008_16348000  -\n") != NULL,
+          "a resource is listed without a version:\n%s", text);
 }
 
 static const attr_t apple_attrs[] = {

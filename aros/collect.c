@@ -71,8 +71,11 @@ static void collect_system(xsi_model *m, const char *architecture)
 
     ArosBase = OpenLibrary((CONST_STRPTR)"aros.library", 0);
     if (ArosBase) {
-        ULONG version = 0, major = 0, minor = 0;
-        STRPTR build = NULL, variant = NULL, arch = NULL;
+        /* ArosInquire stores an IPTR for every AI_Aros* tag, whatever
+         * aros/inquire.h says about ULONG: on a 64-bit AROS a ULONG
+         * destination would be overwritten by eight bytes. */
+        IPTR version = 0, major = 0, minor = 0;
+        IPTR build = 0, variant = 0, arch = 0;
         struct TagItem tags[] = {
             { AI_ArosVersion, (IPTR)&version },
             { AI_ArosReleaseMajor, (IPTR)&major },
@@ -88,13 +91,13 @@ static void collect_system(xsi_model *m, const char *architecture)
                     (unsigned long)version, (unsigned long)major, (unsigned long)minor);
         else
             xsi_missing(m, S, "os.aros", "AROS", XSI_UNKNOWN, "aros.library");
-        if (build && build[0])
+        if (build && ((const char *)build)[0])
             xsi_set(m, S, "os.build", "Build date", "aros.library", "%s", (const char *)build);
         else
             xsi_missing(m, S, "os.build", "Build date", XSI_UNKNOWN, "aros.library");
-        if (variant && variant[0])
+        if (variant && ((const char *)variant)[0])
             xsi_set(m, S, "os.variant", "Variant", "aros.library", "%s", (const char *)variant);
-        if (!architecture && arch && arch[0])
+        if (!architecture && arch && ((const char *)arch)[0])
             architecture = (const char *)arch;
         CloseLibrary(ArosBase);
         ArosBase = NULL;
@@ -157,7 +160,9 @@ static void collect_cpu(xsi_model *m)
         xsi_set(m, C, "cpu.count", "Processors", "processor.resource", "%lu", (unsigned long)count);
     else
         xsi_missing(m, C, "cpu.count", "Processors", XSI_UNKNOWN, "processor.resource");
-    if (model && model[0])
+    /* processor.resource answers "Unknown" when it could not identify the
+     * core; that is its unknown, not a model name. */
+    if (model && model[0] && strcmp((const char *)model, "Unknown") != 0)
         xsi_set(m, C, "cpu.model", "Model", "processor.resource", "%s", (const char *)model);
     else
         xsi_missing(m, C, "cpu.model", "Model", XSI_UNKNOWN, "processor.resource");
@@ -231,11 +236,13 @@ static void collect_list(xsi_model *m, int which, struct List *list)
         copy_name(x->name, sizeof x->name, n->ln_Name);
         x->address = (uint64_t)(IPTR)n;
         x->priority = n->ln_Pri;
-        /* Libraries and devices are struct Library; a resource is one
-         * only when its node says so. */
-        if (which != XSI_LIST_RESOURCES || n->ln_Type == NT_LIBRARY || n->ln_Type == NT_RESOURCE) {
+        /* Libraries and devices are struct Library. A resource may be any
+         * structure behind its Node, so its "version" would be whatever
+         * bytes follow; resources are listed without one. */
+        if (which != XSI_LIST_RESOURCES) {
             x->version = ((struct Library *)n)->lib_Version;
             x->revision = ((struct Library *)n)->lib_Revision;
+            x->has_version = 1;
         }
     }
     Permit();

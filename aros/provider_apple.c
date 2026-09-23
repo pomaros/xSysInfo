@@ -58,8 +58,8 @@ int xsi_provider_apple(xsi_model *m, const char *architecture)
         return 0;
     m->platform = XSI_PLATFORM_APPLE_NATIVE;
     m->platform_name = "apple-native";
-    xsi_set(m, P, "platform.kind", "Platform", "kernel.resource",
-            "Apple Silicon, AROS owns the hardware");
+    xsi_set(m, P, "platform.kind", "Platform", "kernel.resource", "Apple Silicon, native");
+    xsi_set(m, P, "platform.owner", "Hardware owner", "kernel.resource", "AROS");
 
     model = xsi_kernel_attr(APPLE_KATTR_BOARD_MODEL);
     compatible = xsi_kernel_attr(APPLE_KATTR_BOARD_COMPATIBLE);

@@ -26,8 +26,8 @@ int xsi_provider_raspi(xsi_model *m, const char *architecture)
         return 0;
     m->platform = XSI_PLATFORM_RASPI;
     m->platform_name = "raspi";
-    xsi_set(m, P, "platform.kind", "Platform", "kernel.resource",
-            "Raspberry Pi, AROS owns the hardware");
+    xsi_set(m, P, "platform.kind", "Platform", "kernel.resource", "Raspberry Pi, native");
+    xsi_set(m, P, "platform.owner", "Hardware owner", "kernel.resource", "AROS");
     base = xsi_kernel_attr(KATTR_PeripheralBase);
     if (base != -1 && base != 0)
         xsi_set(m, P, "soc.peripherals", "Peripheral base", "kernel.resource", "%s",

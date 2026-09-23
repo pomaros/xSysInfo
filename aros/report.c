@@ -65,9 +65,13 @@ static void modules(out_t *o, const xsi_model *m, const xsi_module_list *l)
     heading(o, l->title);
     for (i = 0; i < l->count; i++) {
         const xsi_module *x = &l->items[i];
-        line(o, "  %-32s %s  %u.%u", x->name,
-             xsi_format_address(x->address, m->pointer_bits, addr, sizeof addr),
-             (unsigned)x->version, (unsigned)x->revision);
+        if (x->has_version)
+            line(o, "  %-32s %s  %u.%u", x->name,
+                 xsi_format_address(x->address, m->pointer_bits, addr, sizeof addr),
+                 (unsigned)x->version, (unsigned)x->revision);
+        else
+            line(o, "  %-32s %s  -", x->name,
+                 xsi_format_address(x->address, m->pointer_bits, addr, sizeof addr));
     }
     if (l->dropped)
         line(o, "  [%u more not listed]", l->dropped);

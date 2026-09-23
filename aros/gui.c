@@ -208,12 +208,16 @@ static void draw_list(void)
         if (k >= (int)l->count)
             break;
         x = &l->items[k];
-        text_clipped(LIST_X + 6, y, x->name, 170, C_TEXT, C_BG);
-        text_clipped(LIST_X + 180, y,
+        /* 19 characters of address at 8 pixels: the full 64-bit value. */
+        text_clipped(LIST_X + 6, y, x->name, 142, C_TEXT, C_BG);
+        text_clipped(LIST_X + 150, y,
                      xsi_format_address(x->address, g.m->pointer_bits, addr, sizeof addr),
-                     140, C_HIGH, C_BG);
-        snprintf(ver, sizeof ver, "%u.%u", (unsigned)x->version, (unsigned)x->revision);
-        text_clipped(LIST_X + 322, y, ver, 40, C_TEXT, C_BG);
+                     156, C_HIGH, C_BG);
+        if (x->has_version)
+            snprintf(ver, sizeof ver, "%u.%u", (unsigned)x->version, (unsigned)x->revision);
+        else
+            snprintf(ver, sizeof ver, "-");
+        text_clipped(LIST_X + 310, y, ver, 52, C_TEXT, C_BG);
     }
     g.buttons[B_LIST_CYCLE].label = l->title;
     button_draw(B_LIST_CYCLE);
