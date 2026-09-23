@@ -14,3 +14,4 @@ xsysinfo-*.lha
 /extern/
 
 **/.DS_Store
+/aros/test/build/
