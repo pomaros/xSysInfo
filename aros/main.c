@@ -90,6 +90,10 @@ int main(int argc, char **argv)
             Flush(out);
     } else {
         rc = xsi_gui_run(&model, dark) ? RETURN_OK : RETURN_FAIL;
+        /* From a Shell, say why; Workbench has no output to say it on. */
+        if (rc != RETURN_OK && Output())
+            Printf((CONST_STRPTR)"xSysInfo: cannot open its 640x256 window on the default "
+                   "public screen; BRIEF or FULL prints the report instead\n");
     }
     if (rda)
         FreeArgs(rda);

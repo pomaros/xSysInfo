@@ -143,6 +143,15 @@ static void test_report_high_memory(void)
     CHECK(strstr(text, "free chunks [unknown]") != NULL && strstr(text, "0 free chunks") == NULL,
           "an unwalked free list reports no chunk count:\n%s", text);
     CHECK(strstr(text, "12.0 GB used of 20.0 GB, 4096-byte blocks") != NULL, "volume:\n%s", text);
+    /* A FAT32 volume of ~1.5 TB in 512-byte sectors: 3.0e9 blocks, which
+     * InfoData32's LONG field holds as a negative number. */
+    CHECK(xsi_block_count((int32_t)3000000000u) == 3000000000ULL, "unsigned block count");
+    v->block_size = 512;
+    v->total_blocks = xsi_block_count((int32_t)3000000000u);
+    v->used_blocks = xsi_block_count((int32_t)2500000000u);
+    text = report(&m, XSI_REPORT_FULL);
+    CHECK(strstr(text, "1.1 TB used of 1.3 TB, 512-byte blocks") != NULL,
+          "a volume past 2^31 blocks:\n%s", text);
     CHECK(strstr(text, "kernel.resource                  0x00000008_16348000  -\n") != NULL,
           "a resource is listed without a version:\n%s", text);
 }
@@ -185,7 +194,8 @@ static void test_provider_apple_old_kernel(void)
     CHECK(xsi_provider_apple(&m, "apple-aarch64") == 1, "still Apple");
     CHECK(!strcmp(text_of(&m, "board.model"), "[unknown]"), "%s", text_of(&m, "board.model"));
     CHECK(!strcmp(text_of(&m, "cpu.midr"), "[unknown]"), "%s", text_of(&m, "cpu.midr"));
-    CHECK(!strcmp(text_of(&m, "drivers.loaded"), "[unknown]"), "%s", text_of(&m, "drivers.loaded"));
+    CHECK(!strcmp(text_of(&m, "drivers.loaded"), "none"), "an empty list is an answer: %s",
+          text_of(&m, "drivers.loaded"));
 }
 
 static void test_provider_hosted(void)

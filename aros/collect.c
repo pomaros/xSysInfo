@@ -62,6 +62,7 @@ static void collect_system(xsi_model *m, const char *architecture)
 {
     const int S = XSI_SEC_SYSTEM;
     struct ExecBase *exec = SysBase;
+    const char *arch_source = "kernel.resource";
 
     xsi_set(m, S, "os.exec", "exec.library", "exec", "%u.%u",
             (unsigned)exec->LibNode.lib_Version, (unsigned)exec->LibNode.lib_Revision);
@@ -97,8 +98,10 @@ static void collect_system(xsi_model *m, const char *architecture)
             xsi_missing(m, S, "os.build", "Build date", XSI_UNKNOWN, "aros.library");
         if (variant && ((const char *)variant)[0])
             xsi_set(m, S, "os.variant", "Variant", "aros.library", "%s", (const char *)variant);
-        if (!architecture && arch && ((const char *)arch)[0])
+        if (!architecture && arch && ((const char *)arch)[0]) {
             architecture = (const char *)arch;
+            arch_source = "aros.library";
+        }
         CloseLibrary(ArosBase);
         ArosBase = NULL;
     } else {
@@ -106,7 +109,7 @@ static void collect_system(xsi_model *m, const char *architecture)
     }
 
     if (architecture)
-        xsi_set(m, S, "os.arch", "Architecture", "kernel.resource", "%s", architecture);
+        xsi_set(m, S, "os.arch", "Architecture", arch_source, "%s", architecture);
     else
         xsi_missing(m, S, "os.arch", "Architecture", XSI_UNKNOWN, "kernel.resource");
     xsi_set(m, S, "build.pointer", "Address width", "this build", "%u-bit", m->pointer_bits);
@@ -168,6 +171,8 @@ static void collect_cpu(xsi_model *m)
         xsi_missing(m, C, "cpu.model", "Model", XSI_UNKNOWN, "processor.resource");
     if (architecture != NOT_ANSWERED && arch_name(architecture))
         xsi_set(m, C, "cpu.arch", "Architecture", "processor.resource", "%s", arch_name(architecture));
+    else
+        xsi_missing(m, C, "cpu.arch", "Architecture", XSI_UNKNOWN, "processor.resource");
     if (vendor != NOT_ANSWERED)
         xsi_set(m, C, "cpu.vendor", "Implementer", "processor.resource", "0x%02lx",
                 (unsigned long)vendor);
@@ -251,15 +256,18 @@ static void collect_list(xsi_model *m, int which, struct List *list)
 
 /* ---- volumes --------------------------------------------------------- */
 
-static void bstr_copy(char *out, size_t size, BSTR b)
+/* Returns 0 when the name had to be cut to fit. */
+static int bstr_copy(char *out, size_t size, BSTR b)
 {
     const UBYTE *s = AROS_BSTR_ADDR(b);
     size_t n = s ? AROS_BSTR_strlen(b) : 0, i;
-    if (n >= size)
+    int whole = n < size;
+    if (!whole)
         n = size - 1;
     for (i = 0; i < n; i++)
         out[i] = (char)s[i];
     out[n] = '\0';
+    return whole;
 }
 
 static void collect_volumes(xsi_model *m)
@@ -281,7 +289,9 @@ static void collect_volumes(xsi_model *m)
         v = xsi_add_volume(m);
         if (!v)
             continue;
-        bstr_copy(v->device, sizeof v->device - 1, dl->dol_Name);
+        /* A cut name would lock some other device, or none: keep the row,
+         * but never ask a volume by it. */
+        v->name_cut = !bstr_copy(v->device, sizeof v->device - 1, dl->dol_Name);
         strcat(v->device, ":");
         if (dl->dol_misc.dol_handler.dol_Handler)
             bstr_copy(v->handler, sizeof v->handler, dl->dol_misc.dol_handler.dol_Handler);
@@ -291,7 +301,12 @@ static void collect_volumes(xsi_model *m)
     me->pr_WindowPtr = (APTR)-1;    /* no "insert volume" requesters */
     for (i = 0; i < m->volume_count && info; i++) {
         xsi_volume *v = &m->volumes[i];
-        BPTR lock = Lock((CONST_STRPTR)v->device, SHARED_LOCK);
+        BPTR lock;
+        if (v->name_cut) {
+            v->state = XSI_VOL_UNKNOWN;
+            continue;
+        }
+        lock = Lock((CONST_STRPTR)v->device, SHARED_LOCK);
         if (!lock) {
             v->state = IoErr() == ERROR_NO_DISK ? XSI_VOL_NO_DISK : XSI_VOL_UNKNOWN;
             continue;
@@ -299,8 +314,8 @@ static void collect_volumes(xsi_model *m)
         if (Info(lock, info)) {
             v->has_info = 1;
             v->block_size = (uint32_t)info->id_BytesPerBlock;
-            v->total_blocks = (uint64_t)info->id_NumBlocks;
-            v->used_blocks = (uint64_t)info->id_NumBlocksUsed;
+            v->total_blocks = xsi_block_count((int32_t)info->id_NumBlocks);
+            v->used_blocks = xsi_block_count((int32_t)info->id_NumBlocksUsed);
             v->dos_type = (uint32_t)info->id_DiskType;
             v->state = info->id_DiskState == ID_WRITE_PROTECTED ? XSI_VOL_READ_ONLY
                      : info->id_DiskState == ID_VALIDATING ? XSI_VOL_BUSY : XSI_VOL_OK;

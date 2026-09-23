@@ -111,8 +111,8 @@ int xsi_provider_apple(xsi_model *m, const char *architecture)
     }
     if (used)
         xsi_set(m, P, "drivers.loaded", "Driver resources", "exec ResourceList", "%s", present);
-    else
-        xsi_missing(m, P, "drivers.loaded", "Driver resources", XSI_UNKNOWN, "exec ResourceList");
+    else    /* the list was read and holds none of them: that is an answer */
+        xsi_set(m, P, "drivers.loaded", "Driver resources", "exec ResourceList", "none");
 
     /* Optional capabilities with no public read interface yet. */
     xsi_missing(m, P, "sensor.temperature", "Temperature", XSI_UNAVAILABLE, "no application API");

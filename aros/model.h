@@ -84,6 +84,7 @@ typedef enum {
 
 typedef struct {
     char device[32];            /* "WORK:" */
+    int name_cut;               /* device name longer than the field */
     char volume[XSI_NAME_LEN];  /* label, or empty */
     char handler[XSI_NAME_LEN]; /* "fat-handler", or empty */
     uint32_t block_size;        /* bytes; 0 when unknown */
@@ -131,6 +132,14 @@ void xsi_model_init(xsi_model *m);
 
 /* Adds a field; returns it (for further edits) or NULL when the section is
  * full, in which case dropped is counted. */
+/* InfoData32 declares its block counts LONG, but handlers store unsigned
+ * counts there (FAT: a ULONG sector count). Widen them as unsigned, or a
+ * volume past 2^31 blocks reads as 16 EiB. */
+static inline uint64_t xsi_block_count(int32_t declared)
+{
+    return (uint64_t)(uint32_t)declared;
+}
+
 xsi_field *xsi_set(xsi_model *m, int section, const char *key, const char *label,
                    const char *source, const char *format, ...)
 #if defined(__GNUC__)
