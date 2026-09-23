@@ -140,6 +140,8 @@ static void test_report_high_memory(void)
     text = report(&m, XSI_REPORT_FULL);
     CHECK(strstr(text, "0x00000008_00000000 - 0x0000000b_df6c4000") != NULL, "range:\n%s", text);
     CHECK(strstr(text, "size       15.4 GB, free 11.7 GB, largest [unknown]") != NULL, "sizes:\n%s", text);
+    CHECK(strstr(text, "free chunks [unknown]") != NULL && strstr(text, "0 free chunks") == NULL,
+          "an unwalked free list reports no chunk count:\n%s", text);
     CHECK(strstr(text, "12.0 GB used of 20.0 GB, 4096-byte blocks") != NULL, "volume:\n%s", text);
     CHECK(strstr(text, "kernel.resource                  0x00000008_16348000  -\n") != NULL,
           "a resource is listed without a version:\n%s", text);

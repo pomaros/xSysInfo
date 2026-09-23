@@ -217,7 +217,7 @@ static void collect_memory(xsi_model *m)
         r->free = (uint64_t)mh->mh_Free;
         r->attributes = mh->mh_Attributes;
         r->priority = mh->mh_Node.ln_Pri;
-        r->largest_known = 0;
+        r->freelist_known = 0;
     }
     Permit();
     xsi_set(m, M, "mem.regions", "Regions", "exec MemList", "%u", m->region_count + m->regions_dropped);

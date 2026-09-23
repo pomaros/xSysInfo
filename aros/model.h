@@ -64,11 +64,12 @@ typedef struct {
 typedef struct {
     char name[XSI_NAME_LEN];
     uint64_t lower, upper;      /* [lower, upper) as the MemHeader states */
-    uint64_t total, free, largest;
+    uint64_t total, free;
     uint32_t attributes;        /* MEMF_* bits as reported */
     int8_t priority;
-    uint32_t chunks;
-    int largest_known;          /* 0 when the free list was not walked */
+    uint32_t chunks;            /* free chunks; only when freelist_known */
+    uint64_t largest_free;      /* largest free chunk; only when freelist_known */
+    int freelist_known;         /* 0: the free list was not walked, both unknown */
 } xsi_memregion;
 
 #define XSI_MAX_REGIONS 32

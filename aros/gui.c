@@ -271,8 +271,8 @@ static void draw_memory(void)
         text_clipped(8, LIST_Y + 56, line, 600, C_TEXT, C_BG);
         snprintf(line, sizeof line, "Free       %s", xsi_format_size(r->free, f, sizeof f));
         text_clipped(8, LIST_Y + 66, line, 600, C_TEXT, C_BG);
-        snprintf(line, sizeof line, "Largest    %s", r->largest_known
-                 ? xsi_format_size(r->largest, f, sizeof f) : "[unknown]");
+        snprintf(line, sizeof line, "Largest    %s", r->freelist_known
+                 ? xsi_format_size(r->largest_free, f, sizeof f) : "[unknown]");
         text_clipped(8, LIST_Y + 76, line, 600, C_TEXT, C_BG);
         snprintf(line, sizeof line, "Attributes 0x%08lx   Priority %d",
                  (unsigned long)r->attributes, (int)r->priority);

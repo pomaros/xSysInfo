@@ -93,10 +93,14 @@ static void memory(out_t *o, const xsi_model *m)
         line(o, "    size       %s, free %s, largest %s",
              xsi_format_size(r->total, total, sizeof total),
              xsi_format_size(r->free, freeb, sizeof freeb),
-             r->largest_known ? xsi_format_size(r->largest, largest, sizeof largest)
+             r->freelist_known ? xsi_format_size(r->largest_free, largest, sizeof largest)
                               : "[unknown]");
-        line(o, "    attributes 0x%08lx, priority %d, %lu free chunks",
-             (unsigned long)r->attributes, (int)r->priority, (unsigned long)r->chunks);
+        if (r->freelist_known)
+            line(o, "    attributes 0x%08lx, priority %d, %lu free chunks",
+                 (unsigned long)r->attributes, (int)r->priority, (unsigned long)r->chunks);
+        else
+            line(o, "    attributes 0x%08lx, priority %d, free chunks [unknown]",
+                 (unsigned long)r->attributes, (int)r->priority);
     }
     if (m->regions_dropped)
         line(o, "  [%u more regions not listed]", m->regions_dropped);
