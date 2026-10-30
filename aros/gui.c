@@ -105,7 +105,8 @@ static void draw(View *v)
 {
     unsigned i,r,c,selected=0; char text[128];
     double rate=v->run->phase==3?v->run->rate:0;
-    double maximum=rate>127077293?rate:127077293;
+    /* Fixed historical scale: fast AArch64 scores must not flatten the Amigas. */
+    const double maximum=40000;
     SetAPen(v->window->RPort,v->pen[BG]);
     RectFill(v->window->RPort,v->window->BorderLeft,v->window->BorderTop,v->window->Width-v->window->BorderRight-1,v->window->Height-v->window->BorderBottom-1);
     gradient(v,1,1,319,21,BLUE,DARK); gradient(v,320,1,319,21,DARK,RED); bevel(v,0,0,640,23,0);
@@ -141,22 +142,33 @@ static void draw(View *v)
     button(v,372,189,80,"PREV",0); button(v,456,189,80,"NEXT",0); button(v,540,189,96,"ALL",0);
     button(v,372,203,128,"SINGLE",!v->smp); button(v,504,203,132,"SMP",v->smp);
     bevel(v,0,98,366,118,0); heading(v,0,98,366,"SPEED COMPARISONS",v->active?">BUSY":">READY");
-    for(i=0;i<=4;++i) { int x=178+i*45; line(v,x,112,x,117,BLACK); snprintf(text,sizeof(text),"%u",i*25); label(v,x-(i==4?22:0),117,text,BLACK); }
+    for(i=0;i<=4;++i) { int x=178+i*45; line(v,x,112,x,117,BLACK); snprintf(text,sizeof(text),i?"%uk":"%u",i*10); label(v,x-(i==4?22:i?8:0),117,text,BLACK); }
     label(v,4,125,"Dhrystones",BLACK);
     if(rate>=1000000) snprintf(text,sizeof(text),"%.1fM",rate/1e6); else snprintf(text,sizeof(text),"%.0f",rate);
     label(v,88,125,text,WHITE);
     label(v,148,125,"You",WHITE);
-    bevel(v,178,119,182,8,1); if(rate>0) rect(v,179,120,(int)(179*rate/maximum)+1,5,RED);
-    for(i=0;i<AA_REFERENCE_COUNT;++i) {
+    bevel(v,178,119,182,8,1);
+    if(rate>0) rect(v,179,120,rate>=maximum?180:(int)(179*rate/maximum)+1,5,RED);
+    if(rate>maximum) label(v,350,126,"+",WHITE);
+    for(i=0;i<6;++i) {
         int y=128+i*8;
-        const char *names[]={"A600 68000 7MHz","B2000 68000 7M","A1200 EC020 14M","A3000 68030 25M","A4000 68040 25M","A4000 68060 50M","M1 Firestorm x1","M1 SMP x8"};
+        const char *names[]={"A600 68000 7MHz","B2000 68000 7M","A1200 EC020 14M","A3000 68030 25M","A4000 68040 25M","A4000 68060 50M"};
         label(v,4,y+7,names[i],BLACK);
         if(rate>0) snprintf(text,sizeof(text),"%5.1f",rate/aa_references[i].dhry); else strcpy(text,"   --");
         /* Keep long modern/Amiga ratios within their column. */
         if(strlen(text)>6) snprintf(text,sizeof(text),"%.0fk",rate/aa_references[i].dhry/1000);
         label(v,128,y+7,text,WHITE);
-        bevel(v,178,y,182,8,1); rect(v,179,y+1,(int)(179*aa_references[i].dhry/maximum)+1,5,BLUE);
+        bevel(v,178,y,182,8,1);
+        rect(v,179,y+1,aa_references[i].dhry>=maximum?180:(int)(179*aa_references[i].dhry/maximum)+1,5,BLUE);
+        if(aa_references[i].dhry>maximum) label(v,350,y+7,"+",WHITE);
     }
+    line(v,4,177,361,177,DARK);
+    if(rate>0) snprintf(text,sizeof(text),"M1 mono: %.2fx",rate/aa_references[6].dhry);
+    else strcpy(text,"M1 mono: --");
+    label(v,4,187,text,BLACK);
+    if(rate>0) snprintf(text,sizeof(text),"M1 SMP: %.2fx",rate/aa_references[7].dhry);
+    else strcpy(text,"M1 SMP: --");
+    label(v,192,187,text,BLACK);
     for(i=0;i<v->info->online;++i) selected+=!!v->selected[i];
     snprintf(text,sizeof(text),"DMIPS %.0f",rate/1757); label(v,4,200,text,BLACK);
     snprintf(text,sizeof(text),"%u CPUs / %s",selected,v->smp?"SMP":"ONE"); label(v,4,211,text,BLACK);

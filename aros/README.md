@@ -86,7 +86,14 @@ Historical Amiga references are immutable data copied from xSysInfo's table:
 Upstream describes these as placeholder values to calibrate. xSysInfo preserves
 them, their provenance and the raw measured rate; it does not recalibrate them.
 
-Two measured M1 references are added without replacing the Amiga entries:
+The graphical comparison uses only the six Amiga bars on a fixed 0–40,000
+Dhrystones/s scale. Bars above that limit are capped and marked with `+`; the
+measured score and numerical ratios remain available. The measured score never
+changes the scale. M1 single-core and SMP comparisons appear as ratios in a
+separate strip below the graph; they do not contribute bars or affect its scale.
+Reports retain all eight reference values.
+
+Two measured M1 references are retained without replacing the Amiga entries:
 
 | Machine / mode | Dhrystones/s (rounded for display) |
 |---|---:|
