@@ -8,6 +8,6 @@
 
 /* Opens the xSysInfo window on the default public screen and runs until
  * the user quits. Returns 0 when the window could not be opened. */
-int xsi_gui_run(xsi_model *m, int dark);
+int xsi_gui_run(xsi_model *m, int dark, int initial_view);
 
 #endif

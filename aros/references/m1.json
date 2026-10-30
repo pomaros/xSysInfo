@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "machine": "Apple MacBook Air (M1, 2020)",
+  "execution": "native PomAROS, not hosted or hypervisor",
+  "compiler": "Clang 20.1.0",
+  "flags": [
+    "-O2",
+    "-fno-builtin",
+    "-fno-lto",
+    "-fno-inline"
+  ],
+  "protocol": "Dhrystone C 2.1 explicit per-worker state; three 1000 ms trials; median aggregate; common window including last batch overrun",
+  "batch_iterations": 20000,
+  "frequency_control": "OS-managed; frequencies and thermal state not independently measured",
+  "binary_sha256": "f0dbdc759adb4e7cc22decc8eec1ca9ca038a8f4b791f1c1a91cf796641a6c71",
+  "workload_sha256": {
+    "dhry.h": "ab8c18f171eccd7229db44daf677b3658fb1ee79a2d133a51fee36d24d369f9a",
+    "dhry_1.c": "6d99323ce7caabdc3d5ccd94a26bd15428ad30f8d806454d1cde17422be820b5",
+    "dhry_2.c": "9b5fa06f87335cd5edc858708ee9ee6fb335b340612616da185f98b81f7171b3"
+  },
+  "measurements": {
+    "single_firestorm": {
+      "dhrystones_per_second": 18242658.84,
+      "reference_integer": 18242659,
+      "trial_rates": [
+        18242658.84,
+        18243226.1,
+        18239399.61
+      ],
+      "cpus": [
+        4
+      ],
+      "workers": 1
+    },
+    "smp_eight": {
+      "dhrystones_per_second": 127077293.41,
+      "reference_integer": 127077293,
+      "trial_rates": [
+        127096393.37,
+        126752648.94,
+        127077293.41
+      ],
+      "cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "workers": 8
+    }
+  }
+}

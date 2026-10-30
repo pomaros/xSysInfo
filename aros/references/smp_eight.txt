@@ -1,0 +1,23 @@
+xSysInfo | Apple MacBook Air (M1, 2020) | Exec 51.12
+CPUs: 8 present, 8 online; RAM: 11167 MiB, 10989 MiB free
+Dhrystone 2.1, explicit worker state; -O2 -fno-builtin -fno-lto -fno-inline
+Compiler: Clang 20.1.0
+Mode: SMP cumulative throughput; workers: 8; trials: 3; median aggregate; shared window: 1000 ms
+Dhrystones/s: 127077293.41; DMIPS: 72326.29
+Speedup: 9.59x (CPU 0 single baseline: 13249206.86 Dhrystones/s)
+CPU 0 Apple Icestorm (efficiency): 13243043.94 Dhrystones/s
+CPU 1 Apple Icestorm (efficiency): 13602583.59 Dhrystones/s
+CPU 2 Apple Icestorm (efficiency): 13602583.59 Dhrystones/s
+CPU 3 Apple Icestorm (efficiency): 13602583.59 Dhrystones/s
+CPU 4 Apple Firestorm (performance): 18256624.67 Dhrystones/s
+CPU 5 Apple Firestorm (performance): 18256624.67 Dhrystones/s
+CPU 6 Apple Firestorm (performance): 18256624.67 Dhrystones/s
+CPU 7 Apple Firestorm (performance): 18256624.67 Dhrystones/s
+A600  68000  7MHz: 1001 historical Dhrystones/s; 126950.34x
+B2000 68000  7MHz: 1408 historical Dhrystones/s; 90253.76x
+A1200 EC020 14MHz: 2550 historical Dhrystones/s; 49834.23x
+A3000 68030 25MHz: 8300 historical Dhrystones/s; 15310.52x
+A4000 68040 25MHz: 32809 historical Dhrystones/s; 3873.24x
+A4000 68060 50MHz: 91000 historical Dhrystones/s; 1396.45x
+Trial Dhrystones/s: 127096393.37, 126752648.94, 127077293.41
+RESULT PASS

@@ -1,101 +1,67 @@
-// SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: 2026 John Knipper
-
-/*
- * xSysInfo for AROS: entry point.
- *
- *   xSysInfo [BRIEF] [FULL] [TO <file>] [DARK] [WHICH] [SCSI] [DEBUG]
- *
- * As upstream: BRIEF and FULL write a report without opening the GUI, FULL
- * wins over BRIEF. TO sends it to a file instead of the Shell. WHICH and
- * SCSI are Amiga-hardware reports and are refused here. From Workbench, or
- * with no report keyword, the GUI opens. The report goes through dos
- * Output(), which Shell redirection follows.
- */
-
-#include <exec/types.h>
-#include <dos/dos.h>
-#include <dos/rdargs.h>
-#include <workbench/startup.h>
-#include <proto/exec.h>
+/* SPDX-License-Identifier: MIT
+ * Copyright (C) 2026 John KNIPPER. */
+#include "sysinfo.h"
+#include "report.h"
 #include <proto/dos.h>
-
+#include <proto/exec.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "collect.h"
-#include "gui.h"
-#include "report.h"
-
-#ifndef XSYSINFO_VERSION
-#define XSYSINFO_VERSION "0.0"
-#endif
-#ifndef XSYSINFO_DATE
-#define XSYSINFO_DATE "0.0.0"
-#endif
-
-const char version_string[] = "$VER: xSysInfo " XSYSINFO_VERSION " (" XSYSINFO_DATE ") AROS";
-
-static xsi_model model;
-
-static void write_handle(void *ctx, const char *text)
-{
-    FPuts((BPTR)ctx, (CONST_STRPTR)text);
-}
-
-enum { A_BRIEF, A_FULL, A_TO, A_DARK, A_WHICH, A_SCSI, A_DEBUG, A_COUNT };
+int __nostdiowin = 1;
+static void write_inventory(void *ctx,const char *s) { fputs(s,(FILE *)ctx); }
 
 int main(int argc, char **argv)
 {
-    IPTR args[A_COUNT] = { 0 };
-    struct RDArgs *rda = NULL;
-    int rc = RETURN_OK;
-    int dark = 0;
-    (void)argv;
-
-    if (argc != 0) {
-        rda = ReadArgs((CONST_STRPTR)"BRIEF/S,FULL/S,TO/K,DARK/S,WHICH/S,SCSI/S,DEBUG/S",
-                       (SIPTR *)args, NULL);
-        if (!rda) {
-            PrintFault(IoErr(), (CONST_STRPTR)"xSysInfo");
-            return RETURN_FAIL;
-        }
-        if (args[A_WHICH] || args[A_SCSI]) {
-            PutStr((CONST_STRPTR)"xSysInfo: WHICH and SCSI read Amiga hardware and are not "
-                                 "available on AROS AArch64\n");
-            FreeArgs(rda);
-            return RETURN_WARN;
-        }
-        dark = args[A_DARK] != 0;
+    AAInfo *info = calloc(1,sizeof(*info));
+    AARun *run = calloc(1,sizeof(*run));
+    unsigned cpus[AA_MAX_CPUS], n = 1, cpu = 0, ms = 1000, i;
+    int cli = 0, smp = 0, workers_set = 0, full = 0, result = 20, poll;
+    double single = 0;
+    if (!info || !run) goto out;
+    if (!aa_platform_init(info)) { puts("xSysInfo: system information or timer unavailable"); goto out; }
+    for (i = 1; i < (unsigned)argc; ++i) {
+        if (!strcmp(argv[i],"CLI") || !strcmp(argv[i],"BRIEF")) cli = 1;
+        else if (!strcmp(argv[i],"FULL")) full = cli = 1;
+        else if (!strcmp(argv[i],"SMP")) smp = cli = 1;
+        else if ((!strcmp(argv[i],"WORKERS") || !strcmp(argv[i],"CPU") || !strcmp(argv[i],"MS")) && i+1 < (unsigned)argc) {
+            char *end; const char *key = argv[i++];
+            unsigned long value = strtoul(argv[i],&end,10);
+            if (!argv[i][0] || *end || value > 10000) goto usage;
+            if (!strcmp(key,"WORKERS")) { n = value; smp = 1; workers_set = 1; }
+            else if (!strcmp(key,"CPU")) cpu = value;
+            else ms = value;
+            cli = 1;
+        } else goto usage;
     }
-
-    xsi_model_init(&model);
-    xsi_collect(&model);
-
-    if (argc != 0 && (args[A_BRIEF] || args[A_FULL])) {
-        BPTR out = Output(), file = BNULL;
-        if (args[A_TO]) {
-            file = Open((CONST_STRPTR)args[A_TO], MODE_NEWFILE);
-            if (!file) {
-                PrintFault(IoErr(), (CONST_STRPTR)"xSysInfo TO");
-                FreeArgs(rda);
-                return RETURN_FAIL;
-            }
-            out = file;
-        }
-        xsi_report(&model, args[A_FULL] ? XSI_REPORT_FULL : XSI_REPORT_BRIEF,
-                   write_handle, (void *)out);
-        if (file && !Close(file))
-            rc = RETURN_FAIL;
-        else if (!file)
-            Flush(out);
-    } else {
-        rc = xsi_gui_run(&model, dark) ? RETURN_OK : RETURN_FAIL;
-        /* From a Shell, say why; Workbench has no output to say it on. */
-        if (rc != RETURN_OK && Output())
-            Printf((CONST_STRPTR)"xSysInfo: cannot open its 640x256 window on the default "
-                   "public screen; BRIEF or FULL prints the report instead\n");
+    if (!cli) { result = aa_gui(info); goto out; }
+    if (smp && !workers_set) n = cpu < info->online ? info->online - cpu : 0;
+    if (!n || cpu >= info->online || n > info->online - cpu) goto usage;
+    for (i = 0; i < n; ++i) cpus[i] = cpu + i;
+    if (!aa_begin(run,info,cpus,1,ms)) goto failed;
+    while ((poll = aa_poll(run)) == 0) {
+        if (SetSignal(0,SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) aa_cancel(run);
+        aa_sleep();
     }
-    if (rda)
-        FreeArgs(rda);
-    return rc;
+    if (poll < 0) goto failed;
+    single = run->rate;
+    if (n > 1) {
+        if (!aa_begin(run,info,cpus,n,ms)) goto failed;
+        while ((poll = aa_poll(run)) == 0) {
+            if (SetSignal(0,SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) aa_cancel(run);
+            aa_sleep();
+        }
+        if (poll < 0) goto failed;
+    }
+    aa_inventory_result(info,run);
+    if (full) xsi_report(info->inventory,XSI_REPORT_FULL,write_inventory,stdout);
+    aa_report(info,run,single); result = 0; goto out;
+failed:
+    /* A partial launch must also be drained before the run is freed. */
+    while (run->phase == 2 && aa_poll(run) == 0) aa_sleep();
+    aa_report(info,run,0); goto out;
+usage:
+    puts("xSysInfo [CLI] [SMP] [WORKERS n] [CPU first] [MS 100..10000]");
+out:
+    aa_platform_close(); free(run); free(info); return result;
 }

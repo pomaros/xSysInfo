@@ -24,6 +24,11 @@
 #include <proto/aros.h>
 #include <proto/kernel.h>
 #include <proto/processor.h>
+#ifdef __AROSEXEC_SMP__
+#include <proto/execlock.h>
+#include <aros/types/spinlock_s.h>
+struct Library *ExecLockBase;
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -45,6 +50,24 @@ intptr_t xsi_kernel_attr(uint32_t id)
 int xsi_has_resource(const char *name)
 {
     return OpenResource((CONST_STRPTR)name) != NULL;
+}
+
+static int lock_list(struct List *list)
+{
+#ifdef __AROSEXEC_SMP__
+    if (!ExecLockBase) return 0;
+    return ObtainSystemLock(list,SPINLOCK_MODE_READ,LOCKF_FORBID);
+#else
+    (void)list; Forbid(); return 1;
+#endif
+}
+static void unlock_list(struct List *list)
+{
+#ifdef __AROSEXEC_SMP__
+    ReleaseSystemLock(list,LOCKF_FORBID);
+#else
+    (void)list; Permit();
+#endif
 }
 
 static void copy_name(char *out, size_t size, const char *name)
@@ -209,7 +232,7 @@ static void collect_memory(xsi_model *m)
     /* Headers are copied, not walked: AROS may manage a header with its
      * own allocator, and SMP kernels guard free lists with spinlocks this
      * program does not take. mh_Free is a single word and safe to read. */
-    Forbid();
+    if (!lock_list(&SysBase->MemList)) return;
     for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
          mh->mh_Node.ln_Succ; mh = (struct MemHeader *)mh->mh_Node.ln_Succ) {
         xsi_memregion *r = xsi_add_region(m);
@@ -224,7 +247,7 @@ static void collect_memory(xsi_model *m)
         r->priority = mh->mh_Node.ln_Pri;
         r->freelist_known = 0;
     }
-    Permit();
+    unlock_list(&SysBase->MemList);
     xsi_set(m, M, "mem.regions", "Regions", "exec MemList", "%u", m->region_count + m->regions_dropped);
 }
 
@@ -233,7 +256,7 @@ static void collect_memory(xsi_model *m)
 static void collect_list(xsi_model *m, int which, struct List *list)
 {
     struct Node *n;
-    Forbid();
+    if (!lock_list(list)) return;
     for (n = list->lh_Head; n->ln_Succ; n = n->ln_Succ) {
         xsi_module *x = xsi_add_module(m, which);
         if (!x)
@@ -250,7 +273,7 @@ static void collect_list(xsi_model *m, int which, struct List *list)
             x->has_version = 1;
         }
     }
-    Permit();
+    unlock_list(list);
     xsi_sort_modules(&m->lists[which]);
 }
 
@@ -364,7 +387,7 @@ static void collect_benchmarks(xsi_model *m)
 {
     /* Upstream's scores are calibrated against m68k machines; nothing is
      * reported until AArch64 timers, units and cancellation are checked. */
-    xsi_missing(m, XSI_SEC_BENCHMARK, "bench.cpu", "CPU", XSI_UNAVAILABLE, "not in this build");
+    xsi_missing(m, XSI_SEC_BENCHMARK, "bench.cpu", "CPU", XSI_UNKNOWN, "xSysInfo SPEED runs the benchmark");
     xsi_missing(m, XSI_SEC_BENCHMARK, "bench.memory", "Memory", XSI_UNAVAILABLE, "not in this build");
 }
 
@@ -373,6 +396,9 @@ void xsi_collect(xsi_model *m)
     const char *architecture = NULL;
     intptr_t a;
 
+#ifdef __AROSEXEC_SMP__
+    ExecLockBase = OpenResource((CONST_STRPTR)"execlock.resource");
+#endif
     xsi_KernelBase = OpenResource((CONST_STRPTR)"kernel.resource");
     a = xsi_kernel_attr(KATTR_Architecture);
     if (a != -1 && a != 0)

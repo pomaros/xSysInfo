@@ -1,0 +1,15 @@
+xSysInfo | Apple MacBook Air (M1, 2020) | Exec 51.12
+CPUs: 8 present, 8 online; RAM: 11167 MiB, 10926 MiB free
+Dhrystone 2.1, explicit worker state; -O2 -fno-builtin -fno-lto -fno-inline
+Compiler: Clang 20.1.0
+Mode: SINGLE; workers: 1; trials: 3; median aggregate; shared window: 1000 ms
+Dhrystones/s: 18242658.84; DMIPS: 10382.85
+CPU 4 Apple Firestorm (performance): 18242658.84 Dhrystones/s
+A600  68000  7MHz: 1001 historical Dhrystones/s; 18224.43x
+B2000 68000  7MHz: 1408 historical Dhrystones/s; 12956.43x
+A1200 EC020 14MHz: 2550 historical Dhrystones/s; 7153.98x
+A3000 68030 25MHz: 8300 historical Dhrystones/s; 2197.91x
+A4000 68040 25MHz: 32809 historical Dhrystones/s; 556.03x
+A4000 68060 50MHz: 91000 historical Dhrystones/s; 200.47x
+Trial Dhrystones/s: 18242658.84, 18243226.10, 18239399.61
+RESULT PASS

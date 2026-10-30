@@ -1,0 +1,15 @@
+name: PomAROS inventory and SMP engine
+on:
+  push:
+    paths: ['aros/**', '.github/workflows/pomaros-host-tests.yml']
+  pull_request:
+    paths: ['aros/**', '.github/workflows/pomaros-host-tests.yml']
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C aros/test CC=clang
+      - run: python3 aros/tests/run.py --cc clang --out build/engine-tests

@@ -138,7 +138,7 @@ void xsi_report(const xsi_model *m, xsi_report_mode mode, xsi_write_fn write, vo
     int i;
     o.write = write;
     o.ctx = ctx;
-    line(&o, "xSysInfo for AROS - %s report, provider %s, %u-bit build",
+    line(&o, "xSysInfo - %s report, provider %s, %u-bit build",
          mode == XSI_REPORT_FULL ? "full" : "brief", m->platform_name, m->pointer_bits);
     for (i = 0; i < XSI_SEC_COUNT; i++)
         section(&o, &m->sections[i], mode == XSI_REPORT_FULL);

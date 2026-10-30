@@ -1,4 +1,6 @@
-# xSysInfo
+# xSysInfo — PomAROS AArch64 fork
+
+This fork adds a native PomAROS application with SINGLE/SMP Dhrystone benchmarks, historical Amiga references and system inventory. See [AROS build, usage and measurement details](aros/README.md). The upstream m68k documentation follows below.
 
 ![XSysInfo](docs/xsysinfo.png)
 

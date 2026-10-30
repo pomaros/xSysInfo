@@ -1,143 +1,168 @@
-# xSysInfo for AROS AArch64
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 John Knipper -->
 
-One AROS application, built from this tree for three AArch64 systems: native
-Apple Silicon, Macaros (AROS hosted on macOS) and native Raspberry Pi. It keeps
-xSysInfo's window, palettes, panels and report modes. It replaces the Amiga
-hardware probes with AROS OS interfaces and optional platform providers.
+# xSysInfo for PomAROS AArch64
 
-The upstream m68k build (`Makefile`, `src/`) is unchanged. Nothing in `aros/`
-is compiled into it, and nothing from `src/` except the adapted drawing
-primitives is compiled into this build.
+xSysInfo is the native C system-information and Dhrystone application in
+`aros/`. Its classic gray relief panels, red measured bar, blue reference bars
+and Amiga comparison table follow xSysInfo. On a large display the interface
+uses a pixel-faithful 2x Topaz font and 2x controls. Resizing the main window
+selects integer scales (up to 4x), centering the layout without stretching glyphs.
+The inventory views also use 2x on sufficiently large screens. The original m68k program in `src/`
+is a separate upstream implementation.
 
-## Layout
+## Use
 
-| File | Role |
+```
+xSysInfo                         graphical interface
+xSysInfo CLI                     single CPU benchmark
+xSysInfo SMP                     all online CPUs, plus a single CPU baseline
+xSysInfo SMP CPU 4 WORKERS 4      four consecutive online CPUs starting at 4
+xSysInfo FULL SMP                inventory and benchmark report
+xSysInfo CLI CPU 4 MS 1000       select CPU and trial duration
+```
+
+`BRIEF` is an alias for `CLI`. Shell redirection saves a command-line report.
+CPU IDs come from PomAROS; the example above does not define a universal
+performance-core numbering convention. `MS` accepts 100 through 10000, defaults
+to 1000, and applies to each of three trials. The build handles up to 256 CPUs;
+a larger topology is explicitly refused rather than silently truncated.
+
+The main window offers SINGLE/SMP, selectable CPUs, paged CPU information,
+SPEED/CANCEL, MEMORY, BOARDS, DRIVES, PRINT and QUIT. SINGLE uses the first
+selected CPU. SMP measures a single baseline on that CPU before measuring all
+selected CPUs. PRINT writes `RAM:xSysInfo.txt`, including inventory and results.
+MEMORY and DRIVES open their detailed inventory windows; BOARDS opens the
+library/device/resource and platform browser. Its Print button saves the
+inventory alone to `RAM:xSysInfo-inventory.txt`.
+
+Keyboard shortcuts: `s` starts/cancels, `m` switches SINGLE/SMP, `p` exports,
+`e` opens memory, `b` opens the inventory browser, `d` opens drives, and `q`/Esc
+closes the active window. Closing the benchmark window cancels and reaps its
+workers before releasing their state. Ctrl-C also cancels CLI measurements.
+
+## Measurement contract
+
+The kernel is Dhrystone C 2.1 adapted from xSysInfo revision
+`0ee81383380251df0fc67f78c0282530a7dcff84`. Each worker has independent records,
+arrays and scalar state, passed explicitly to the benchmark functions. This
+reentrant variant adds context-argument overhead; historical ratios are
+synthetic benchmark comparisons, not claims about whole-machine application
+performance. The build uses `-O2 -fno-builtin -fno-lto -fno-inline`; compiler,
+source hashes, SDK and flags are recorded in `build.json`.
+
+Each worker warms up and verifies Dhrystone's expected final values. Once all
+workers are ready, the parent publishes a common future start and deadline.
+Workers execute complete 20000-iteration batches, resetting the accumulating
+array element between batches to avoid integer overflow. The final batch can
+cross the deadline: **all workers use the same denominator**, from the common
+start to the latest completion. Scheduling delay and synchronization overhead
+therefore reduce the reported throughput rather than inflating it. Results
+require final integrity and first/last CPU-ID agreement with requested affinity.
+All children are joined before the next trial or program exit.
+
+Three trials are run; the median aggregate trial supplies both the total and
+its corresponding per-worker rates. DMIPS means Dhrystones/s divided by 1757.
+SMP reports cumulative throughput, not the speed of one core. Speedup names
+its baseline CPU: heterogeneous systems can exceed the worker count when
+compared with an efficiency core. No frequency, temperature or throttling
+condition is inferred from the score.
+
+Historical Amiga references are immutable data copied from xSysInfo's table:
+
+| Machine | Dhrystones/s |
+|---|---:|
+| A600 68000 7 MHz | 1001 |
+| B2000 68000 7 MHz | 1408 |
+| A1200 EC020 14 MHz | 2550 |
+| A3000 68030 25 MHz | 8300 |
+| A4000 68040 25 MHz | 32809 |
+| A4000 68060 50 MHz | 91000 |
+
+Upstream describes these as placeholder values to calibrate. xSysInfo preserves
+them, their provenance and the raw measured rate; it does not recalibrate them.
+
+Two measured M1 references are added without replacing the Amiga entries:
+
+| Machine / mode | Dhrystones/s (rounded for display) |
+|---|---:|
+| MacBook Air M1, one Firestorm core | 18,242,659 |
+| MacBook Air M1, eight cores SMP | 127,077,293 |
+
+The [measurement record](references/m1.json) contains all three trial rates,
+compiler/options, workload hashes and limitations. The corresponding
+[single-core report](references/single_firestorm.txt) and
+[SMP report](references/smp_eight.txt) are retained. These are observed native
+PomAROS results with OS-managed clocks, not theoretical M1 specifications.
+The SMP entry is explicitly aggregate throughput and must not be read as a
+single-core reference. Ordinary benchmark runs never overwrite the reference data.
+
+## Architecture and platform extensions
+
+| Component | Responsibility |
 |---|---|
-| `model.h`, `model.c` | The data model. Plain C99 with 64-bit addresses and sizes. Every field carries a state (`ok`, `unavailable`, `unknown`, `not applicable`) and the source it was read from. |
-| `report.c` | The BRIEF and FULL text reports, generated from the model. |
-| `collect.c` | Common collectors: exec, dos, aros.library, kernel.resource, and processor.resource when present. |
-| `provider_apple.c` | Apple native: board, MIDR, exception level and counter frequency recorded by the Apple kernel, and the Apple driver resources that are loaded. |
-| `provider_hosted.c` | Hosted AROS: marks the host as the owner of the hardware; host details are not queried. |
-| `provider_raspi.c` | Raspberry Pi: the SoC peripheral base. Board model and revision are unavailable. |
-| `gui.c` | The window, drawn from the model. The primitives are adapted from `src/gui.c`. |
-| `main.c` | Arguments, report or GUI. |
-| `build.sh` | Cross-build for one profile. |
-| `test/` | Host tests of the model, the report and all three providers. |
+| `benchmark.c`, `dhry_1.c`, `dhry_2.c` | Reentrant workload, validation, trial coordination and comparison table |
+| `platform_aros.c` | EClock time, processor inventory, online CPU count, affinity, process creation and exit joining |
+| `model.c`, `collect.c`, `report.c` | OS inventory, explicit unavailable states and reports |
+| `provider_apple.c`, `provider_hosted.c`, `provider_raspi.c` | Optional OS-reported platform facts; no direct hardware access |
+| `gui.c`, `inventory_gui.c` | Benchmark dashboard and detailed inventory views |
+| `tests/engine.c`, `test/` | Engine lifecycle/integrity and inventory/provider host tests |
 
-## Usage
+New platforms implement their processor/topology/timer support in PomAROS and,
+when additional platform facts are exposed, add a provider through `collect.h`.
+The application does not hardcode M1 core counts or privileged registers. An
+unknown platform retains generic CPU information and benchmarks when its OS
+provides the required services. Missing affinity refuses parallel execution.
+Present processors and online processors are separate fields. SMP collectors
+use `execlock.resource` read locks for shared Exec lists, instead of relying
+on `Forbid()` on a single CPU. Per-region free memory is an instantaneous
+snapshot, not a transactional global sum; allocator free lists are not walked.
 
-```
-xSysInfo                  window on the default public screen
-xSysInfo BRIEF            short report to the Shell, no window
-xSysInfo FULL             complete report (sources, lists, regions, volumes)
-xSysInfo FULL TO RAM:x    the same, to a file
-xSysInfo DARK             dark palette
-```
-
-When both are given, FULL wins over BRIEF, as upstream. `WHICH` and `SCSI` read
-Amiga hardware; they are refused with return code 5. In the window, *Print*
-writes the FULL report to `RAM:xsysinfo.txt`. *Memory* pages through the
-MemHeaders and *Drives* lists the running filesystem handlers. `q`, `Esc` and
-the close gadget quit.
-
-## What each value means
-
-- **Loaded driver resources.** A resource that is present means its driver was
-  initialised. It does not mean the function was tested.
-- **Hosted.** Macaros is a guest: the board, temperature and battery fields are
-  `not applicable`. Host hardware is never shown as an AROS driver. The host
-  family comes from the kernel's architecture string. The host OS version would
-  need hostlib and is reported `unavailable`.
-- **Memory headers.** Headers are copied under `Forbid()`; their free lists are
-  never walked. AROS may manage a header with its own allocator, and SMP
-  kernels guard free lists with spinlocks. The largest free block per region is
-  therefore `unknown`, while the system-wide largest block comes from
-  `AvailMem(MEMF_LARGEST)`.
-- **Volumes.** Only devices whose handler is already running are asked, so
-  reading the list starts no handler. Requesters are suppressed during the
-  query. Sizes are computed in 64 bits.
-- **Processor.** processor.resource is optional. Where it is absent, which
-  includes the Apple native bundle, the processor fields are `unavailable`.
-  On Apple, the provider adds the boot core's identity.
-- **Benchmarks.** Upstream's scores are calibrated against m68k machines, so
-  this build reports no benchmark at all. Benchmarks are a later slice.
+The inventory describes memory, filesystems, loaded drivers and software.
+Loaded resources do not prove hardware qualification. Memory bandwidth, floating
+point and disk throughput benchmarks are not implemented; no fabricated scores
+are displayed. The comparison table is specifically the Dhrystone CPU test.
 
 ## Build
 
+Select the exact SDK and the matching `collect-aros` tools explicitly:
+
 ```sh
-aros/build.sh apple      # ~/Build/aros-apple-core/apple      (XSI_SDK_APPLE)
-aros/build.sh macaros    # ~/aros-build, darwin-aarch64        (XSI_SDK_MACAROS)
-aros/build.sh raspi      # ~/aros-build-850, raspi-aarch64     (XSI_SDK_RASPI)
-make -C aros/test        # host tests, ASan + UBSan
+python3 aros/build.py \
+  --sdk /path/to/build/bin/apple-aarch64 \
+  --tools /path/to/build/bin/darwin-aarch64/tools \
+  --cc /path/to/aros-crosstools/bin/clang \
+  --smp --out build/xSysInfo-native
 ```
 
-The toolchain is `~/aros-crosstools` clang with each SDK's `collect-aros`.
-Output goes to `build/aros-<profile>/xSysInfo`, with a `build.json` holding the
-flags, source revision and SHA-256.
+Use `--smp` only for an SMP SDK/runtime: it changes Exec structure layout.
+Omit it for a UP guest SDK. `--hosted` reserves x18 for the Darwin hosted ABI.
+`aros/build.sh` forwards the same arguments. The script verifies that its output
+is a little-endian AArch64 ELF and records build inputs; it does not build an
+OS, publish source or change a product pin. Include the notices beside any
+redistributed executable. Raspberry Pi and additional Apple models require
+their own SDK/runtime qualification; an M1 test does not qualify those machines.
 
-| Profile | SDK target | Program flags | Link |
-|---|---|---|---|
-| apple | `apple-aarch64`, private core | `-ffixed-x18` (the core's `aarch64-apple` flags) | strict |
-| macaros | `darwin-aarch64`, upstream | `-mcmodel=large -ffixed-x18` | `--allow-multiple-definition`, as aros-pkg: the upstream link libraries each define the `__aros_libreq_*` markers |
-| raspi | `raspi-aarch64`, upstream | `-mcmodel=large` | as macaros |
+## Verification
 
-The Apple SDK has processor-topology and framebuffer tags that the upstream
-SDKs lack. The code guards them with `#ifdef`, so the three builds differ only
-by what their headers declare.
+```
+make -C aros/test
+python3 aros/tests/run.py --out build/xSysInfo-tests
+```
 
-## Runtime dependencies
+Host engine tests exercise independent Dhrystone state, SINGLE/SMP coordination,
+shared accounting, cancellation, each partial-worker-creation failure,
+affinity rejection and input bounds under ASan/UBSan. The host adapter simulates
+logical CPU IDs; it is not a hardware-affinity or performance test.
 
-exec, dos, stdc, intuition and graphics are opened automatically. aros.library
-is opened by the program itself and is optional; task.resource is used by the
-startup code. The program uses kernel.resource and processor.resource when they
-are present and hostlib.resource only to test whether it exists. It needs no
-identify.library, openpci.library, MMU library or m68k code.
-
-## Platform matrix
-
-Build, launch, GUI and report are recorded separately. A build is never
-counted as a runtime result.
-
-| Profile | Build | Launch | Report | GUI | Evidence |
-|---|---|---|---|---|---|
-| apple | PASS | PASS | PASS: BRIEF, FULL, WHICH refused with rc 5, Print; all 137 regions | PASS: Memory, Drives, Resources, Platform, Print | M1 J313 at 1fd3061, 63/63 checks after reboot and read-only FAT capture, integration repo `artifacts/runs/20260923-xsysinfo/result.json` |
-| macaros | PASS | PASS | PASS: BRIEF, FULL TO file, WHICH refused with rc 5 | PASS: cycles, Memory, Drives, Print, Quit, DARK | `aros-ctl` run on the M5, integration repo `artifacts/runs/20260923-xsysinfo-macaros/` |
-| raspi | PASS | not run | not run | not run | — |
-| host tests | PASS, 48 checks | — | — | — | `make -C aros/test` |
+Hardware qualification is specific to the tested executable and platform.
+The M1 reference reports above retain the measured scores and trial results.
+Other Apple models and Raspberry Pi require their own runtime validation.
 
 ## Licences
 
-New files are BSD-2-Clause, © 2026 John Knipper, matching the project.
-`aros/gui.c` keeps Stefan Reinauer's copyright line for the adapted primitives
-and palettes. The build links only the AROS SDK link libraries. None of
-upstream's third-party parts is used: identify, flexcat, TinySetPatch,
-MMULib, openpci and the Dhrystone sources. The Apple core part names are
-facts taken from public documentation; no code was copied.
-
-## AROS findings
-
-- `aros/inquire.h` documents the `AI_Aros*` results as ULONG, but
-  `ArosInquireA()` stores an IPTR for each of them. On a 64-bit AROS, a ULONG
-  destination is overwritten by eight bytes. This build passes IPTR.
-- processor.resource on hosted AArch64 answers the model string `Unknown`
-  and no clock speed.
-
-## OS interfaces this build lacks
-
-These values are unavailable because no interface exists for applications, not
-because of this program. Each would be a small, separately scoped OS change:
-
-- **Apple.** Temperatures and battery. The kernel's privileged desktop proof
-  reads SMC keys (charge, battery temperature and voltage, adapter) through
-  smc.resource, but there is no bounded, cached, read-only query for
-  applications, and a second SMC client must not be started. xSysInfo reports
-  these as unavailable until such a query exists.
-  Per-cluster core topology. Whether each driver passed its own self-test,
-  as distinct from being loaded.
-- **Pi.** Board model, revision and memory split from the firmware mailbox
-  (a kernel attribute, like Apple's board model). SoC temperature.
-- **Hosted.** Host OS name and version, as a hostlib-backed kernel
-  attribute. This avoids having each application call host functions itself.
-- **All.** processor.resource on the Apple native bundle, or an equivalent
-  core count and model. A per-MemHeader "largest free block" that is safe
-  under SMP.
+New fork application/engine files use [MIT](LICENSE.MIT), Copyright (c) 2026 John Knipper.
+The existing inventory files retain BSD-2-Clause and their original notices.
+The reentrant Dhrystone files retain Reinhold P. Weicker's attribution and the
+xSysInfo BSD-2-Clause grant in `LICENSE.xSysInfo`; upstream code is not relicensed.
+The benchmark's provenance and adaptations are described above.

@@ -1,506 +1,283 @@
-// SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: 2025 Stefan Reinauer
-// SPDX-FileCopyrightText: 2026 John Knipper
-
-/*
- * xSysInfo for AROS: the window.
- *
- * The look is upstream's: the eight-colour palettes, the title strips, 3D
- * panels and buttons, the software list on the left, the information panel
- * on the right, the Memory and Drives pages. The drawing primitives
- * (panel, 3D box, button, clipped text) are adapted from src/gui.c; what is
- * drawn comes from the model, so the window and the text report can never
- * disagree. Always a window on the public screen: every AArch64 AROS
- * display is RTG, which is where upstream opens a window too.
- */
-
-#include <exec/types.h>
-#include <intuition/intuition.h>
-#include <intuition/screens.h>
-#include <graphics/gfx.h>
-#include <graphics/text.h>
-#include <graphics/rastport.h>
-#include <dos/dos.h>
-#include <proto/exec.h>
-#include <proto/intuition.h>
-#include <proto/graphics.h>
-#include <proto/dos.h>
-
-#include <stdio.h>
-#include <string.h>
-
+/* SPDX-License-Identifier: MIT
+ * Copyright (C) 2026 John KNIPPER. */
+#include "sysinfo.h"
 #include "gui.h"
 #include "report.h"
+#include <intuition/intuition.h>
+#include <graphics/text.h>
+#include <graphics/gfxmacros.h>
+#include <graphics/view.h>
+#include <diskfont/diskfont.h>
+#include <proto/diskfont.h>
+#include <dos/dosextens.h>
+#include <proto/intuition.h>
+#include <proto/graphics.h>
+#include <proto/exec.h>
+#include <proto/dos.h>
+#include <proto/utility.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#define WIN_W 640
-#define WIN_H 256
-#define NUM_COLORS 8
-#define LINE_H 8
-
-/* Upstream's palettes (src/main.c), 12-bit RGB. */
-static const UWORD default_palette[NUM_COLORS] = {
-    0x0AAA, 0x0666, 0x0000, 0x0FFF, 0x0068, 0x0F00, 0x0DDD, 0x0444
-};
-static const UWORD dark_palette[NUM_COLORS] = {
-    0x0112, 0x0234, 0x0CCC, 0x0FFF, 0x0258, 0x0E43, 0x0777, 0x0445
-};
-
-enum { C_BG, C_TITLE, C_TEXT, C_HIGH, C_BAR, C_YOU, C_LIGHT, C_DARK };
-
-typedef enum { VIEW_MAIN, VIEW_MEMORY, VIEW_DRIVES } view_t;
-
-typedef enum {
-    B_NONE, B_QUIT, B_MEMORY, B_DRIVES, B_PRINT, B_LIST_CYCLE, B_LIST_UP, B_LIST_DOWN,
-    B_INFO_CYCLE, B_PREV, B_NEXT, B_EXIT, B_COUNT
-} button_id;
-
+enum { BG, BLACK, WHITE, BLUE, RED, DARK, PEN_COUNT };
 typedef struct {
-    WORD x, y, w, h;
-    const char *label;
-    int enabled, pressed;
-} button_t;
-
-static struct {
-    xsi_model *m;
-    struct Window *win;
-    struct RastPort *rp;
+    struct Window *window;
     struct Screen *screen;
-    struct TextFont *font;
-    LONG pens[NUM_COLORS];
-    int pens_ok[NUM_COLORS];
-    WORD ox, oy;                /* inner origin */
-    view_t view;
-    int list, list_scroll, info_page, region, drive_scroll;
-    button_t buttons[B_COUNT];
-    char status[80];
-} g;
+    struct TextFont *font, *base_font;
+    int scale;
+    LONG pen[PEN_COUNT];
+    AAInfo *info;
+    AARun *run;
+    unsigned selected[AA_MAX_CPUS], cpu_page;
+    int smp, active, closing, pending_smp;
+    double single;
+    char status[128];
+} View;
 
-#define PEN(c) (g.pens[c])
-
-static const int info_pages[] = {
-    XSI_SEC_SYSTEM, XSI_SEC_CPU, XSI_SEC_MEMORY, XSI_SEC_PLATFORM, XSI_SEC_DISPLAY, XSI_SEC_BENCHMARK
-};
-#define INFO_PAGE_COUNT ((int)(sizeof info_pages / sizeof info_pages[0]))
-
-/* ---- primitives, adapted from src/gui.c ------------------------------- */
-
-static void fill(WORD x, WORD y, WORD w, WORD h, int c)
+static int px(View *v,int x) { int inner=v->window->Width-v->window->BorderLeft-v->window->BorderRight; return v->window->BorderLeft+(inner-800*v->scale)/2+x*v->scale; }
+static int py(View *v,int y) { int inner=v->window->Height-v->window->BorderTop-v->window->BorderBottom; return v->window->BorderTop+(inner-480*v->scale)/2+y*v->scale; }
+static void set_scale(View *v,int scale)
 {
-    SetAPen(g.rp, PEN(c));
-    RectFill(g.rp, g.ox + x, g.oy + y, g.ox + x + w - 1, g.oy + y + h - 1);
+    struct TextAttr attr = {(STRPTR)"topaz.font",(UWORD)(8*scale),0,0};
+    struct DiskFontHeader *scaled = NULL;
+    if(scale<1) scale=1;
+    if(scale>4) scale=4;
+    attr.ta_YSize=8*scale;
+    if(v->scale==scale && v->font) return;
+    if(scale>1) scaled=NewScaledDiskFont(v->base_font,&attr);
+    if(v->font && v->font!=v->base_font) CloseFont(v->font);
+    v->font=scaled?&scaled->dfh_TF:v->base_font;
+    v->scale=scaled?scale:1;
+    if(v->window) SetFont(v->window->RPort,v->font);
+}
+static void rect(View *v,int x,int y,int w,int h,int color)
+{
+    SetAPen(v->window->RPort,v->pen[color]);
+    RectFill(v->window->RPort,px(v,x),py(v,y),px(v,x+w)-1,py(v,y+h)-1);
+}
+static void line(View *v,int x,int y,int xx,int yy,int color)
+{
+    SetAPen(v->window->RPort,v->pen[color]);
+    Move(v->window->RPort,px(v,x),py(v,y)); Draw(v->window->RPort,px(v,xx),py(v,yy));
+}
+static void label(View *v,int x,int y,const char *s,int color)
+{
+    SetAPen(v->window->RPort,v->pen[color]); SetDrMd(v->window->RPort,JAM1);
+    Move(v->window->RPort,px(v,x),py(v,y)); Text(v->window->RPort,s,strlen(s));
+}
+static void bevel(View *v,int x,int y,int w,int h,int sunken)
+{
+    line(v,x,y,x+w,y,sunken?DARK:WHITE); line(v,x,y,x,y+h,sunken?DARK:WHITE);
+    line(v,x,y+h,x+w,y+h,sunken?WHITE:DARK); line(v,x+w,y,x+w,y+h,sunken?WHITE:DARK);
+}
+static void button(View *v,int x,int y,int w,const char *s,int selected)
+{
+    rect(v,x,y,w,30,BG); bevel(v,x,y,w,30,selected);
+    label(v,x+8,y+20,s,BLACK);
 }
 
-static void box3d(WORD x, WORD y, WORD w, WORD h, int recessed)
+static void draw(View *v)
 {
-    struct RastPort *rp = g.rp;
-    x += g.ox;
-    y += g.oy;
-    SetAPen(rp, PEN(recessed ? C_DARK : C_LIGHT));
-    Move(rp, x, y + h - 1);
-    Draw(rp, x, y);
-    Draw(rp, x + w - 1, y);
-    SetAPen(rp, PEN(recessed ? C_LIGHT : C_DARK));
-    Move(rp, x + 1, y + h - 1);
-    Draw(rp, x + w - 1, y + h - 1);
-    Draw(rp, x + w - 1, y + 1);
-}
-
-static void text_clipped(WORD x, WORD y, const char *s, WORD max_w, int fg, int bg)
-{
-    struct RastPort *rp = g.rp;
-    WORD len = (WORD)strlen(s);
-    SetAPen(rp, PEN(fg));
-    SetBPen(rp, PEN(bg));
-    SetDrMd(rp, JAM2);
-    while (len > 0 && TextLength(rp, (CONST_STRPTR)s, len) > max_w)
-        len--;
-    if (len > 0) {
-        Move(rp, g.ox + x, g.oy + y);
-        Text(rp, (CONST_STRPTR)s, len);
+    unsigned i, count = 0;
+    char text[128];
+    double rate = v->run->phase == 3 ? v->run->rate : 0;
+    double maximum = rate > 127077293 ? rate : 127077293;
+    SetAPen(v->window->RPort,v->pen[BG]);
+    RectFill(v->window->RPort,v->window->BorderLeft,v->window->BorderTop,v->window->Width-v->window->BorderRight-1,v->window->Height-v->window->BorderBottom-1);
+    bevel(v,8,8,784,225,1);
+    rect(v,10,10,780,28,DARK);
+    label(v,20,29,"xSysInfo - AArch64 SYSTEM INFORMATION",WHITE);
+    {
+        label(v,22,65,v->info->platform,BLACK);
+        label(v,22,85,v->info->os,BLACK);
+        snprintf(text,sizeof(text),"CPUs present: %u   online: %u",v->info->present,v->info->online);
+        label(v,22,108,text,BLACK);
+        snprintf(text,sizeof(text),"RAM: %llu MiB   Free: %llu MiB",(unsigned long long)(v->info->memory_total>>20),(unsigned long long)(v->info->memory_free>>20));
+        label(v,22,131,text,BLACK);
+        label(v,22,157,"Dhrystone 2.1 / 3 trials / median",BLACK);
+        label(v,22,180,"Amiga + measured M1 reference scores",BLACK);
+        label(v,22,204,"Select cores on the right; SPEED to run",BLACK);
     }
-}
-
-static void strip(WORD x, WORD y, WORD w, WORD h, const char *title)
-{
-    fill(x, y, w, h, C_TITLE);
-    box3d(x, y, w, h, 0);
-    if (title) {
-        SetDrMd(g.rp, JAM1);
-        SetAPen(g.rp, PEN(C_DARK));
-        Move(g.rp, g.ox + x + 5, g.oy + y + h - 3);
-        Text(g.rp, (CONST_STRPTR)title, strlen(title));
-        SetAPen(g.rp, PEN(C_HIGH));
-        Move(g.rp, g.ox + x + 4, g.oy + y + h - 4);
-        Text(g.rp, (CONST_STRPTR)title, strlen(title));
-        SetDrMd(g.rp, JAM2);
-    }
-}
-
-static void panel(WORD x, WORD y, WORD w, WORD h, const char *title)
-{
-    fill(x, y, w, h, C_BG);
-    box3d(x, y, w, h, 0);
-    if (title)
-        strip(x + 2, y + 2, w - 4, 11, title);
-}
-
-static void button_draw(button_id id)
-{
-    button_t *b = &g.buttons[id];
-    WORD tw;
-    if (!b->label)
-        return;
-    fill(b->x, b->y, b->w, b->h, b->enabled ? C_BG : C_DARK);
-    box3d(b->x, b->y, b->w, b->h, b->pressed);
-    tw = TextLength(g.rp, (CONST_STRPTR)b->label, strlen(b->label));
-    text_clipped(b->x + (b->w - tw) / 2, b->y + (b->h + 6) / 2, b->label, b->w - 2,
-                 b->enabled ? C_TEXT : C_BG, b->enabled ? C_BG : C_DARK);
-}
-
-static void button_set(button_id id, WORD x, WORD y, WORD w, WORD h, const char *label, int enabled)
-{
-    button_t *b = &g.buttons[id];
-    b->x = x;
-    b->y = y;
-    b->w = w;
-    b->h = h;
-    b->label = label;
-    b->enabled = enabled;
-    b->pressed = 0;
-}
-
-/* ---- views ----------------------------------------------------------- */
-
-#define LIST_X 0
-#define LIST_Y 24
-#define LIST_W 366
-#define LIST_H 176
-#define LIST_LINES 17
-#define INFO_X 368
-#define INFO_W 272
-#define INFO_LINES 17
-
-static void draw_header(void)
-{
-    char line[96];
-    strip(0, 0, WIN_W, 22, NULL);
-    SetDrMd(g.rp, JAM1);
-    SetAPen(g.rp, PEN(C_HIGH));
-    Move(g.rp, g.ox + 8, g.oy + 10);
-    Text(g.rp, (CONST_STRPTR)"xSysInfo", 8);
-    SetDrMd(g.rp, JAM2);
-    snprintf(line, sizeof line, "AROS %u-bit, provider %s", g.m->pointer_bits, g.m->platform_name);
-    text_clipped(8, 19, line, 300, C_HIGH, C_TITLE);
-    text_clipped(330, 14, g.status[0] ? g.status : "", 300, C_HIGH, C_TITLE);
-}
-
-static void draw_list(void)
-{
-    const xsi_module_list *l = &g.m->lists[g.list];
-    char addr[32], ver[16];
-    int i;
-    panel(LIST_X, LIST_Y, LIST_W, LIST_H, NULL);
-    fill(LIST_X + 2, LIST_Y + 16, LIST_W - 4, LIST_LINES * LINE_H + 4, C_BG);
-    for (i = 0; i < LIST_LINES; i++) {
-        int k = g.list_scroll + i;
-        WORD y = LIST_Y + 24 + i * LINE_H;
-        const xsi_module *x;
-        if (k >= (int)l->count)
-            break;
-        x = &l->items[k];
-        /* 19 characters of address at 8 pixels: the full 64-bit value. */
-        text_clipped(LIST_X + 6, y, x->name, 142, C_TEXT, C_BG);
-        text_clipped(LIST_X + 150, y,
-                     xsi_format_address(x->address, g.m->pointer_bits, addr, sizeof addr),
-                     156, C_HIGH, C_BG);
-        if (x->has_version)
-            snprintf(ver, sizeof ver, "%u.%u", (unsigned)x->version, (unsigned)x->revision);
-        else
-            snprintf(ver, sizeof ver, "-");
-        text_clipped(LIST_X + 310, y, ver, 52, C_TEXT, C_BG);
-    }
-    g.buttons[B_LIST_CYCLE].label = l->title;
-    button_draw(B_LIST_CYCLE);
-    g.buttons[B_LIST_UP].enabled = g.list_scroll > 0;
-    g.buttons[B_LIST_DOWN].enabled = g.list_scroll + LIST_LINES < (int)l->count;
-    button_draw(B_LIST_UP);
-    button_draw(B_LIST_DOWN);
-}
-
-static void draw_info(void)
-{
-    const xsi_section *s = &g.m->sections[info_pages[g.info_page]];
-    unsigned i;
-    panel(INFO_X, LIST_Y, INFO_W, LIST_H, NULL);
-    g.buttons[B_INFO_CYCLE].label = s->title;
-    button_draw(B_INFO_CYCLE);
-    for (i = 0; i < s->count && i < INFO_LINES; i++) {
-        const xsi_field *f = &s->fields[i];
-        WORD y = LIST_Y + 24 + (WORD)i * LINE_H;
-        text_clipped(INFO_X + 6, y, f->label, 108, C_TEXT, C_BG);
-        text_clipped(INFO_X + 116, y, xsi_field_text(f), INFO_W - 122,
-                     f->state == XSI_OK ? C_HIGH : C_DARK, C_BG);
-    }
-}
-
-static void draw_bottom(void)
-{
-    fill(0, 202, WIN_W, WIN_H - 202, C_BG);
-    button_draw(B_MEMORY);
-    button_draw(B_DRIVES);
-    button_draw(B_PRINT);
-    button_draw(B_QUIT);
-}
-
-static void draw_memory(void)
-{
-    char a[32], b[32], line[96], t[24], f[24];
-    panel(0, LIST_Y, WIN_W, LIST_H, "Memory");
-    if (g.m->region_count == 0) {
-        text_clipped(8, LIST_Y + 30, "No memory headers reported", 400, C_TEXT, C_BG);
-    } else {
-        const xsi_memregion *r = &g.m->regions[g.region];
-        snprintf(line, sizeof line, "Region %d of %u: %s", g.region + 1, g.m->region_count,
-                 r->name[0] ? r->name : "(unnamed)");
-        text_clipped(8, LIST_Y + 30, line, 600, C_HIGH, C_BG);
-        snprintf(line, sizeof line, "Range      %s - %s",
-                 xsi_format_address(r->lower, g.m->pointer_bits, a, sizeof a),
-                 xsi_format_address(r->upper, g.m->pointer_bits, b, sizeof b));
-        text_clipped(8, LIST_Y + 46, line, 600, C_TEXT, C_BG);
-        snprintf(line, sizeof line, "Size       %s", xsi_format_size(r->total, t, sizeof t));
-        text_clipped(8, LIST_Y + 56, line, 600, C_TEXT, C_BG);
-        snprintf(line, sizeof line, "Free       %s", xsi_format_size(r->free, f, sizeof f));
-        text_clipped(8, LIST_Y + 66, line, 600, C_TEXT, C_BG);
-        snprintf(line, sizeof line, "Largest    %s", r->freelist_known
-                 ? xsi_format_size(r->largest_free, f, sizeof f) : "[unknown]");
-        text_clipped(8, LIST_Y + 76, line, 600, C_TEXT, C_BG);
-        snprintf(line, sizeof line, "Attributes 0x%08lx   Priority %d",
-                 (unsigned long)r->attributes, (int)r->priority);
-        text_clipped(8, LIST_Y + 86, line, 600, C_TEXT, C_BG);
-    }
-    g.buttons[B_PREV].enabled = g.region > 0;
-    g.buttons[B_NEXT].enabled = g.region + 1 < (int)g.m->region_count;
-    button_draw(B_PREV);
-    button_draw(B_NEXT);
-    fill(0, 202, WIN_W, WIN_H - 202, C_BG);
-    button_draw(B_EXIT);
-}
-
-static void draw_drives(void)
-{
-    char line[128], total[24], used[24];
-    int i;
-    panel(0, LIST_Y, WIN_W, LIST_H, "Drives");
-    for (i = 0; i < 18; i++) {
-        int k = g.drive_scroll + i;
-        const xsi_volume *v;
-        if (k >= (int)g.m->volume_count)
-            break;
-        v = &g.m->volumes[k];
-        if (v->has_info && v->block_size)
-            snprintf(line, sizeof line, "%-10s %-18s %-10s %9s of %9s  %s", v->device,
-                     v->volume[0] ? v->volume : "-", xsi_volume_state_name(v->state),
-                     xsi_format_size(v->used_blocks * (uint64_t)v->block_size, used, sizeof used),
-                     xsi_format_size(v->total_blocks * (uint64_t)v->block_size, total, sizeof total),
-                     v->handler[0] ? v->handler : "-");
-        else
-            snprintf(line, sizeof line, "%-10s %-18s %-10s [size unknown]  %s", v->device,
-                     v->volume[0] ? v->volume : "-", xsi_volume_state_name(v->state),
-                     v->handler[0] ? v->handler : "-");
-        text_clipped(8, LIST_Y + 24 + i * LINE_H, line, WIN_W - 16, C_TEXT, C_BG);
-    }
-    if (g.m->volume_count == 0)
-        text_clipped(8, LIST_Y + 24, "No running filesystem handlers", 400, C_TEXT, C_BG);
-    g.buttons[B_PREV].enabled = g.drive_scroll > 0;
-    g.buttons[B_NEXT].enabled = g.drive_scroll + 18 < (int)g.m->volume_count;
-    button_draw(B_PREV);
-    button_draw(B_NEXT);
-    fill(0, 202, WIN_W, WIN_H - 202, C_BG);
-    button_draw(B_EXIT);
-}
-
-static void layout(void)
-{
-    memset(g.buttons, 0, sizeof g.buttons);
-    if (g.view == VIEW_MAIN) {
-        button_set(B_LIST_CYCLE, LIST_X + 4, LIST_Y + 3, 120, 11, "", 1);
-        button_set(B_LIST_UP, LIST_X + LIST_W - 40, LIST_Y + 3, 16, 11, "^", 1);
-        button_set(B_LIST_DOWN, LIST_X + LIST_W - 22, LIST_Y + 3, 16, 11, "v", 1);
-        button_set(B_INFO_CYCLE, INFO_X + 4, LIST_Y + 3, 140, 11, "", 1);
-        button_set(B_MEMORY, 4, 206, 100, 12, "Memory", 1);
-        button_set(B_DRIVES, 110, 206, 100, 12, "Drives", 1);
-        button_set(B_PRINT, 216, 206, 100, 12, "Print", 1);
-        button_set(B_QUIT, 536, 206, 100, 12, "Quit", 1);
-    } else {
-        button_set(B_PREV, 520, LIST_Y + 3, 56, 11, "Prev", 1);
-        button_set(B_NEXT, 580, LIST_Y + 3, 56, 11, "Next", 1);
-        button_set(B_EXIT, 536, 206, 100, 12, "Exit", 1);
-    }
-}
-
-static void redraw(void)
-{
-    layout();
-    fill(0, 0, WIN_W, WIN_H, C_BG);
-    draw_header();
-    if (g.view == VIEW_MAIN) {
-        draw_list();
-        draw_info();
-        draw_bottom();
-    } else if (g.view == VIEW_MEMORY) {
-        draw_memory();
-    } else {
-        draw_drives();
-    }
-}
-
-/* ---- print ----------------------------------------------------------- */
-
-static void write_handle(void *ctx, const char *text)
-{
-    FPuts((BPTR)ctx, (CONST_STRPTR)text);
-}
-
-static void print_report(void)
-{
-    BPTR fh = Open((CONST_STRPTR)"RAM:xsysinfo.txt", MODE_NEWFILE);
-    if (!fh) {
-        snprintf(g.status, sizeof g.status, "Could not write RAM:xsysinfo.txt");
-        return;
-    }
-    xsi_report(g.m, XSI_REPORT_FULL, write_handle, (void *)fh);
-    snprintf(g.status, sizeof g.status, Close(fh) ? "Saved RAM:xsysinfo.txt"
-                                                  : "Writing RAM:xsysinfo.txt failed");
-}
-
-/* ---- events ---------------------------------------------------------- */
-
-static button_id hit(WORD mx, WORD my)
-{
-    int i;
-    mx -= g.ox;
-    my -= g.oy;
-    for (i = 1; i < B_COUNT; i++) {
-        button_t *b = &g.buttons[i];
-        if (b->label && b->enabled && mx >= b->x && mx < b->x + b->w && my >= b->y && my < b->y + b->h)
-            return (button_id)i;
-    }
-    return B_NONE;
-}
-
-static int press(button_id id)
-{
-    const xsi_module_list *l = &g.m->lists[g.list];
-    switch (id) {
-    case B_QUIT: return 0;
-    case B_MEMORY: g.view = VIEW_MEMORY; break;
-    case B_DRIVES: g.view = VIEW_DRIVES; break;
-    case B_EXIT: g.view = VIEW_MAIN; break;
-    case B_PRINT: print_report(); break;
-    case B_LIST_CYCLE: g.list = (g.list + 1) % XSI_LIST_COUNT; g.list_scroll = 0; break;
-    case B_LIST_UP: g.list_scroll = g.list_scroll > LIST_LINES ? g.list_scroll - LIST_LINES : 0; break;
-    case B_LIST_DOWN:
-        if (g.list_scroll + LIST_LINES < (int)l->count)
-            g.list_scroll += LIST_LINES;
-        break;
-    case B_INFO_CYCLE: g.info_page = (g.info_page + 1) % INFO_PAGE_COUNT; break;
-    case B_PREV:
-        if (g.view == VIEW_MEMORY && g.region > 0)
-            g.region--;
-        else if (g.view == VIEW_DRIVES)
-            g.drive_scroll = g.drive_scroll > 18 ? g.drive_scroll - 18 : 0;
-        break;
-    case B_NEXT:
-        if (g.view == VIEW_MEMORY && g.region + 1 < (int)g.m->region_count)
-            g.region++;
-        else if (g.view == VIEW_DRIVES && g.drive_scroll + 18 < (int)g.m->volume_count)
-            g.drive_scroll += 18;
-        break;
-    default: break;
-    }
-    redraw();
-    return 1;
-}
-
-static void obtain_pens(int dark)
-{
-    const UWORD *pal = dark ? dark_palette : default_palette;
-    struct ColorMap *cm = g.screen->ViewPort.ColorMap;
-    int i;
-    for (i = 0; i < NUM_COLORS; i++) {
-        ULONG r = (pal[i] >> 8) & 0xf, gg = (pal[i] >> 4) & 0xf, b = pal[i] & 0xf;
-        g.pens[i] = ObtainBestPenA(cm, r * 0x11111111UL, gg * 0x11111111UL, b * 0x11111111UL, NULL);
-        g.pens_ok[i] = g.pens[i] >= 0;
-        if (!g.pens_ok[i])
-            g.pens[i] = i == C_TEXT ? 1 : 0;
-    }
-}
-
-static void release_pens(void)
-{
-    int i;
-    for (i = 0; i < NUM_COLORS; i++)
-        if (g.pens_ok[i])
-            ReleasePen(g.screen->ViewPort.ColorMap, g.pens[i]);
-}
-
-int xsi_gui_run(xsi_model *m, int dark)
-{
-    static struct TextAttr topaz8 = { (STRPTR)"topaz.font", 8, FS_NORMAL, FPF_ROMFONT };
-    int running = 1;
-    memset(&g, 0, sizeof g);
-    g.m = m;
-    g.screen = LockPubScreen(NULL);
-    if (!g.screen)
-        return 0;
-    g.win = OpenWindowTags(NULL,
-        WA_Title, (IPTR)"xSysInfo for AROS",
-        WA_InnerWidth, WIN_W, WA_InnerHeight, WIN_H,
-        WA_PubScreen, (IPTR)g.screen,
-        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
-        WA_Activate, TRUE, WA_SmartRefresh, TRUE, WA_RMBTrap, TRUE,
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY,
-        TAG_DONE);
-    if (!g.win) {
-        UnlockPubScreen(NULL, g.screen);
-        return 0;
-    }
-    g.rp = g.win->RPort;
-    g.ox = g.win->BorderLeft;
-    g.oy = g.win->BorderTop;
-    g.font = OpenFont(&topaz8);
-    if (g.font)
-        SetFont(g.rp, g.font);
-    obtain_pens(dark);
-    redraw();
-
-    while (running) {
-        struct IntuiMessage *msg;
-        WaitPort(g.win->UserPort);
-        while (running && (msg = (struct IntuiMessage *)GetMsg(g.win->UserPort)) != NULL) {
-            ULONG cls = msg->Class;
-            UWORD code = msg->Code;
-            WORD mx = msg->MouseX, my = msg->MouseY;
-            ReplyMsg((struct Message *)msg);
-            if (cls == IDCMP_CLOSEWINDOW)
-                running = 0;
-            else if (cls == IDCMP_VANILLAKEY && (code == 'q' || code == 'Q' || code == 27))
-                running = 0;
-            else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
-                button_id id = hit(mx, my);
-                if (id != B_NONE) {
-                    g.buttons[id].pressed = 1;
-                    button_draw(id);
-                    running = press(id);
-                }
+    line(v,427,40,427,230,DARK);
+    for (i = 0; i < 7 && v->cpu_page+i < v->info->online; ++i) {
+        unsigned cpu = v->cpu_page+i;
+        AACpu *c = &v->info->cpus[cpu];
+        snprintf(text,sizeof(text),"[%c] CPU %u C%u %.26s",v->selected[cpu]?'x':' ',cpu,c->cluster,c->name);
+        label(v,440,57+i*21,text,BLACK);
+        if (v->run->phase == 3) {
+            unsigned k;
+            for(k=0;k<v->run->count;++k) if(v->run->workers[k].cpu==cpu) {
+                snprintf(text,sizeof(text),"    %.3f M Dhrystones/s",v->run->per_cpu[k]/1000000.0);
+                label(v,440,66+i*21,text,BLUE);
             }
         }
     }
+    button(v,440,204,105,"PREV",0); button(v,555,204,105,"NEXT",0);
+    button(v,670,204,110,"ALL",0);
+    rect(v,8,242,784,27,DARK); label(v,18,261,"SPEED COMPARISONS",WHITE);
+    label(v,440,261,(v->run->phase == 3 ? v->run->count > 1 : v->smp)?"SMP - cumulative throughput":"SINGLE - one CPU",WHITE);
+    snprintf(text,sizeof(text),"Dhrystones/s  %.0f",rate); label(v,18,291,text,BLACK);
+    rect(v,370,275,410,20,BG); bevel(v,370,275,410,20,1);
+    if (rate > 0) rect(v,372,277,(int)(406*rate/maximum),16,RED);
+    for (i = 0; i < AA_REFERENCE_COUNT; ++i) {
+        int y = 300+i*14;
+        label(v,18,y+10,aa_references[i].name,BLACK);
+        if (rate > 0) snprintf(text,sizeof(text),"%8.2fx",rate/aa_references[i].dhry);
+        else strcpy(text,"      --");
+        label(v,245,y+10,text,BLACK);
+        bevel(v,370,y,410,13,1);
+        rect(v,372,y+2,(int)(406*aa_references[i].dhry/maximum)+1,9,BLUE);
+    }
+    for (i=0;i<v->info->online;++i) count += !!v->selected[i];
+    snprintf(text,sizeof(text),"DMIPS %.2f  | selected %u",rate/1757.0,count);
+    label(v,18,426,text,BLACK);
+    if (v->single > 0 && v->run->count > 1 && rate > 0) {
+        snprintf(text,sizeof(text),"Speedup %.2fx",rate/v->single); label(v,440,426,text,BLACK);
+    }
+    button(v,8,439,77,"QUIT",0); button(v,92,439,95,"MEMORY",0);
+    button(v,194,439,95,"BOARDS",0); button(v,296,439,90,"DRIVES",0);
+    button(v,393,439,90,v->active?"CANCEL":"SPEED",v->active);
+    button(v,490,439,90,"PRINT",0); button(v,587,439,95,"SINGLE",!v->smp);
+    button(v,689,439,100,"SMP",v->smp);
+    /* Window title carries status without changing the classic panel layout. */
+    SetWindowTitles(v->window,(CONST_STRPTR)v->status,(CONST_STRPTR)-1);
+}
 
-    release_pens();
-    CloseWindow(g.win);
-    if (g.font)
-        CloseFont(g.font);
-    UnlockPubScreen(NULL, g.screen);
-    return 1;
+static void start(View *v,int baseline)
+{
+    unsigned ids[AA_MAX_CPUS], n = 0, i;
+    for (i=0;i<v->info->online;++i) if (v->selected[i]) ids[n++] = i;
+    if (!n) { strcpy(v->status,"Select at least one CPU"); return; }
+    if (!v->smp || baseline) n = 1;
+    v->active = aa_begin(v->run,v->info,ids,n,1000);
+    if (!v->active && v->run->phase == 2) v->active = 1;
+    snprintf(v->status,sizeof(v->status),"%s",v->active ? (baseline?"Measuring single CPU baseline...":"Measuring Dhrystone...") : v->run->error);
+}
+
+static void inventory_write(void *ctx,const char *s) { fputs(s,(FILE *)ctx); }
+
+static void save_report(View *v)
+{
+    FILE *f = fopen("RAM:xSysInfo.txt","w");
+    unsigned i;
+    if (!f) { strcpy(v->status,"Cannot create RAM:xSysInfo.txt"); return; }
+    if (v->info->inventory) xsi_report(v->info->inventory,XSI_REPORT_FULL,inventory_write,f);
+    fprintf(f,"xSysInfo | %s | %s\n",v->info->platform,v->info->os);
+    fprintf(f,"Dhrystone 2.1, explicit per-worker state, -O2 -fno-builtin -fno-lto -fno-inline\nCompiler: %s\n",__VERSION__);
+    fprintf(f,"%s; %u workers; 3 trials, median; Dhrystones/s %.2f; DMIPS %.2f\n",
+        v->run->count>1?"SMP cumulative throughput":"SINGLE",v->run->count,v->run->rate,v->run->rate/1757.0);
+    for(i=0;i<v->run->count;++i) fprintf(f,"CPU %u: %.2f Dhrystones/s\n",v->run->workers[i].cpu,v->run->per_cpu[i]);
+    for(i=0;i<AA_REFERENCE_COUNT;++i) fprintf(f,"%s: %llu reference Dhrystones/s; %.2fx\n",aa_references[i].name,
+        (unsigned long long)aa_references[i].dhry,v->run->rate/aa_references[i].dhry);
+    if(v->single>0 && v->run->count>1) fprintf(f,"Speedup %.2fx relative to CPU %u (%.2f Dhrystones/s)\n",v->run->rate/v->single,v->run->workers[0].cpu,v->single);
+    fprintf(f,"RESULT %s\n",v->run->phase==3?"PASS":v->run->error[0]?v->run->error:"NOT RUN");
+    { int failed = ferror(f); if (fclose(f)) failed = 1;
+      strcpy(v->status,failed?"Report write failed":"Report saved: RAM:xSysInfo.txt"); }
+}
+
+int aa_gui(AAInfo *info)
+{
+    View *v = calloc(1,sizeof(*v));
+    struct TextAttr attr = {(STRPTR)"topaz.font",8,0,0};
+    const unsigned rgb[PEN_COUNT] = {0xaaaaaa,0x000000,0xffffff,0x08657f,0xff2020,0x555555};
+    unsigned i;
+    int result = 20;
+    if (!v) return result;
+    for (i=0;i<PEN_COUNT;++i) v->pen[i] = -1;
+    v->info = info; v->run = calloc(1,sizeof(*v->run));
+    v->screen = LockPubScreen(NULL); v->base_font = OpenFont(&attr);
+    if (!v->run || !v->screen || !v->base_font) goto out;
+    set_scale(v,v->screen->Width>=1640 && v->screen->Height>=1000?2:1);
+    for (i=0;i<PEN_COUNT;++i) {
+        ULONG r = ((rgb[i]>>16)&255)*0x01010101UL, g = ((rgb[i]>>8)&255)*0x01010101UL, b = (rgb[i]&255)*0x01010101UL;
+        v->pen[i] = ObtainBestPen(v->screen->ViewPort.ColorMap,r,g,b,TAG_DONE);
+        if (v->pen[i] < 0) goto out;
+    }
+    strcpy(v->status,"xSysInfo - ready");
+    v->window = OpenWindowTags(NULL,WA_PubScreen,(IPTR)v->screen,WA_Title,(IPTR)v->status,
+        WA_InnerWidth,800*v->scale,WA_InnerHeight,480*v->scale,WA_MinWidth,800,WA_MinHeight,480,
+        WA_MaxWidth,-1,WA_MaxHeight,-1,WA_CloseGadget,TRUE,WA_DragBar,TRUE,
+        WA_DepthGadget,TRUE,WA_SizeGadget,TRUE,WA_Activate,TRUE,
+        WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|IDCMP_NEWSIZE|IDCMP_MOUSEBUTTONS|IDCMP_VANILLAKEY,
+        TAG_DONE);
+    if (!v->window) goto out;
+    SetFont(v->window->RPort,v->font);
+    for(i=0;i<info->online;++i) v->selected[i] = 1;
+    draw(v);
+    while (!v->closing || v->active) {
+        struct IntuiMessage *m;
+        int redraw = 0;
+        while ((m = (struct IntuiMessage *)GetMsg(v->window->UserPort))) {
+            ULONG cls = m->Class; UWORD code = m->Code;
+            int x = (m->MouseX-px(v,0))/v->scale;
+            int y = (m->MouseY-py(v,0))/v->scale;
+            ReplyMsg((struct Message *)m);
+            if (cls == IDCMP_CLOSEWINDOW || (cls==IDCMP_VANILLAKEY && (code=='q'||code==27))) {
+                v->closing=1; v->pending_smp=0; if(v->active) aa_cancel(v->run);
+            } else if (cls == IDCMP_REFRESHWINDOW) {
+                BeginRefresh(v->window); draw(v); EndRefresh(v->window,TRUE);
+            } else if (cls == IDCMP_NEWSIZE) {
+                int sx=(v->window->Width-v->window->BorderLeft-v->window->BorderRight)/800;
+                int sy=(v->window->Height-v->window->BorderTop-v->window->BorderBottom)/480;
+                set_scale(v,sx<sy?sx:sy); redraw=1;
+            }
+            else if (cls == IDCMP_VANILLAKEY && !v->closing) {
+                redraw=1;
+                if (code=='s') {
+                    if(v->active) { v->pending_smp=0; aa_cancel(v->run); }
+                    else { v->pending_smp=v->smp; start(v,v->smp); }
+                } else if(code=='m' && !v->active) v->smp=!v->smp;
+                else if(code=='p' && !v->active) save_report(v);
+                else if(!v->active && (code=='b'||code=='d'||code=='e'))
+                    xsi_gui_run(v->info->inventory,0,code=='e'?1:code=='d'?2:0);
+            }
+            else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTUP && !v->closing) {
+                redraw=1;
+                if (y>=439 && y<469) {
+                    if (x<85) { v->closing=1; v->pending_smp=0; if(v->active) aa_cancel(v->run); }
+                    else if (x>=92 && x<187) (!v->active ? xsi_gui_run(v->info->inventory,0,1) : 0);
+                    else if (x>=194 && x<289) (!v->active ? xsi_gui_run(v->info->inventory,0,0) : 0);
+                    else if (x>=296 && x<386) (!v->active ? xsi_gui_run(v->info->inventory,0,2) : 0);
+                    else if (x>=393 && x<483) {
+                        if(v->active) { v->pending_smp=0; aa_cancel(v->run); }
+                        else { v->pending_smp=v->smp; start(v,v->smp); }
+                    } else if (x>=490 && x<580 && !v->active) save_report(v);
+                    else if (x>=587 && !v->active) v->smp=x>=689;
+                } else if (!v->active && x>=440 && y>=47 && y<194) {
+                    unsigned cpu = v->cpu_page+(y-47)/21;
+                    if(cpu<info->online) v->selected[cpu]^=1;
+                } else if (y>=204 && y<234 && x>=440) {
+                    if(x<545 && v->cpu_page>=7) v->cpu_page-=7;
+                    else if(x>=555 && x<660 && v->cpu_page+7<info->online) v->cpu_page+=7;
+                    else if(x>=670 && !v->active) for(i=0;i<info->online;++i) v->selected[i]=1;
+                }
+            }
+        }
+        if(v->active) {
+            int state = aa_poll(v->run);
+            if(state) {
+                v->active=0; redraw=1;
+                if(state>0) aa_inventory_result(v->info,v->run);
+                if(state>0 && v->run->count==1) v->single=v->run->rate;
+                if(state>0 && v->pending_smp && !v->closing) { v->pending_smp=0; start(v,0); }
+                else { v->pending_smp=0; snprintf(v->status,sizeof(v->status),"%s",state>0?"xSysInfo - measurement complete":v->run->error); }
+            }
+        }
+        if (SetSignal(0,SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) {
+            v->closing=1; v->pending_smp=0;
+            if(v->active) aa_cancel(v->run);
+        }
+        if(redraw) draw(v);
+        aa_sleep();
+    }
+    result=0;
+out:
+    if(v->window) CloseWindow(v->window);
+    if(v->screen) {
+        for(i=0;i<PEN_COUNT;++i) if(v->pen[i]>=0) ReleasePen(v->screen->ViewPort.ColorMap,v->pen[i]);
+        UnlockPubScreen(NULL,v->screen);
+    }
+    if(v->font && v->font!=v->base_font) CloseFont(v->font);
+    if(v->base_font) CloseFont(v->base_font);
+    free(v->run); free(v); return result;
 }
