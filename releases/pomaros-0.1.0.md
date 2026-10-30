@@ -40,8 +40,8 @@ release executable was tested on a MacBook Air M1 (2020), PomAROS Exec 51.12,
 and was subsequently **reported working without recompilation on real
 Raspberry Pi 500+ and Pi 3B+ hardware** running AROS AArch64 SMP. The Pi screenshot
 shows Exec 51.10, four Cortex-A76 CPUs and a completed four-worker SMP result.
-The exact OS distribution/build identifiers for the two physical Pi systems
-have not been supplied.
+The Pi 500+ screenshot shows [PiAROS](https://piaros.amiga.icu/). Exact OS build
+identifiers for the two physical Pi systems have not been supplied.
 
 | Running system | Evidence |
 |---|---|
@@ -53,7 +53,9 @@ have not been supplied.
 | AROS AArch64 UP or ARM32 | Requires a separate matching build; this archive uses the AArch64 SMP ABI |
 | Raspberry Pi OS / Linux, macOS | Different OS ABI |
 
-![Original release on a real Pi 500+, four-worker SMP result](https://raw.githubusercontent.com/pomaros/xSysInfo/pomaros/docs/xsysinfo-raspberry-pi500.webp)
+[![xSysInfo running on PiAROS on a real Pi 500+, four-worker SMP result](https://raw.githubusercontent.com/pomaros/xSysInfo/pomaros/docs/xsysinfo-raspberry-pi500.webp)](https://piaros.amiga.icu/)
+
+xSysInfo running on [PiAROS](https://piaros.amiga.icu/) on a Raspberry Pi 500+.
 
 **Existing release updated in place:** the refreshed executable recognizes the
 upstream `aarch64-raspi` identifier instead of displaying `common`, and reads
