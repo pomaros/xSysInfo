@@ -117,6 +117,9 @@ single-core reference. Ordinary benchmark runs never overwrite the reference dat
 
 ## Architecture and platform extensions
 
+See the [platform porting guide](PORTING.md) for a step-by-step provider example,
+OS/SMP requirements, SDK selection, target validation and reference submissions.
+
 | Component | Responsibility |
 |---|---|
 | `benchmark.c`, `dhry_1.c`, `dhry_2.c` | Reentrant workload, validation, trial coordination and comparison table |

@@ -8,6 +8,8 @@ Actual native M1 capture: the six Amiga bars use a fixed 0–40,000 Dhrystones/s
 
 See [AArch64 build instructions, usage and measurement details](aros/README.md), including the [recorded M1 references](aros/references/m1.json). Other Apple models and Raspberry Pi require their own runtime qualification.
 
+For contributors: [adding another Apple model, Raspberry Pi or AArch64 platform](aros/PORTING.md).
+
 ### Acknowledgements
 
 Thank you to **Stefan Reinauer and the xSysInfo contributors** for the original application, its classic interface and bitmap logo, and for making its source available. This fork builds on their work; original attribution and licence notices are preserved. Thanks also to **Reinhold P. Weicker** for Dhrystone, the benchmark underlying the speed comparisons.
