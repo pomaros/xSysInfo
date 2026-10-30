@@ -15,6 +15,13 @@ according to the screen size, preserving all geometry. The detailed inventory
 views use 2x on sufficiently large screens. The original m68k program in `src/`
 is a separate upstream implementation.
 
+![Native PomAROS M1 SMP result with separate Amiga bars and M1 ratios](../docs/xsysinfo-pomaros-m1.png)
+
+Based on [xSysInfo by Stefan Reinauer](https://github.com/reinauer/xSysInfo).
+Thank you to Stefan and the upstream contributors for the application and its
+classic visual design, and to Reinhold P. Weicker for Dhrystone. Original
+attribution and licence notices are retained.
+
 ## Use
 
 ```

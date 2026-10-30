@@ -1,6 +1,20 @@
 # xSysInfo — PomAROS AArch64 fork
 
-This fork adds a native PomAROS application with SINGLE/SMP Dhrystone benchmarks, historical Amiga references and system inventory. See [AROS build, usage and measurement details](aros/README.md). The upstream m68k documentation follows below.
+This is the PomAROS AArch64 fork of [Stefan Reinauer's xSysInfo](https://github.com/reinauer/xSysInfo). It adds native SINGLE/SMP Dhrystone benchmarks and system inventory, starting with Apple M1, while preserving the classic interface and the six historical Amiga reference values.
+
+![xSysInfo running natively on PomAROS on a MacBook Air M1, with an eight-core SMP result](docs/xsysinfo-pomaros-m1.png)
+
+Actual native M1 capture: the six Amiga bars use a fixed 0–40,000 Dhrystones/s scale, with `+` marking overflow. M1 mono and SMP ratios are shown separately below the graph. Both ratios compare the current result against the corresponding reference; the capture shows an eight-core SMP result. The window has a fixed size and centered button labels.
+
+See [AArch64 build instructions, usage and measurement details](aros/README.md), including the [recorded M1 references](aros/references/m1.json). Other Apple models and Raspberry Pi require their own runtime qualification.
+
+### Acknowledgements
+
+Thank you to **Stefan Reinauer and the xSysInfo contributors** for the original application, its classic interface and bitmap logo, and for making its source available. This fork builds on their work; original attribution and licence notices are preserved. Thanks also to **Reinhold P. Weicker** for Dhrystone, the benchmark underlying the speed comparisons.
+
+## Upstream Amiga / m68k documentation
+
+The following documentation and screenshot describe the upstream Amiga program. For the PomAROS application, use the AArch64 instructions linked above.
 
 ![XSysInfo](docs/xsysinfo.png)
 
