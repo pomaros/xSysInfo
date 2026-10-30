@@ -228,6 +228,16 @@ static void test_provider_raspi(void)
     CHECK(!strcmp(text_of(&m, "soc.peripherals"), m.pointer_bits > 32 ? "0x00000000_fe000000" : "0xfe000000"),
           "%s", text_of(&m, "soc.peripherals"));
     CHECK(!strcmp(text_of(&m, "board.model"), "[unavailable]"), "board not guessed");
+    xsi_model_init(&m);
+    CHECK(xsi_provider_raspi(&m, "aarch64-raspi") == 1, "recognise upstream AArch64 kernel order");
+    CHECK(m.platform == XSI_PLATFORM_RASPI, "upstream selects Pi provider");
+    CHECK(!strcmp(text_of(&m, "board.model"), "[unavailable]"), "upstream board also not guessed");
+    xsi_model_init(&m);
+    CHECK(xsi_provider_raspi(&m, "arm-raspi") == 1, "recognise upstream ARM kernel order");
+    xsi_model_init(&m);
+    CHECK(xsi_provider_raspi(&m, NULL) == 0, "missing architecture is not a Pi");
+    CHECK(xsi_provider_raspi(&m, "aarch64-raspi-hosted") == 0, "do not infer native board from ambiguous suffix");
+    CHECK(m.sections[XSI_SEC_PLATFORM].count == 0, "rejected identifiers do not add fields");
 }
 
 static void test_no_provider(void)

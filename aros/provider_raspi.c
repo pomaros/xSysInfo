@@ -22,7 +22,10 @@ int xsi_provider_raspi(xsi_model *m, const char *architecture)
     intptr_t base;
     char text[40];
 
-    if (!architecture || strncmp(architecture, "raspi-", 6) != 0)
+    /* Upstream kernel uses CPU-board order; existing builds also use board-CPU. */
+    if (!architecture || (strncmp(architecture, "raspi-", 6) != 0
+        && strcmp(architecture, "aarch64-raspi") != 0
+        && strcmp(architecture, "arm-raspi") != 0))
         return 0;
     m->platform = XSI_PLATFORM_RASPI;
     m->platform_name = "raspi";

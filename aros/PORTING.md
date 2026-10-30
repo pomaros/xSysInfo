@@ -25,6 +25,9 @@ must run the same workload and measurement protocol on each target.
 
 ## Raspberry Pi builds from AROS upstream
 
+See the [scoped QEMU compatibility experiment](compatibility/upstream-qemu.md)
+for an unchanged-release test and the distinction from hardware qualification.
+
 AROS upstream lists `raspi-armhf`, `raspi-aarch64` and `raspi-aarch64-smp`
 configurations in its [target matrix](https://github.com/aros-development-team/AROS).
 Choose by the **running OS image**, not just the Pi's hardware capabilities.
