@@ -10,6 +10,8 @@ See [AArch64 build instructions, usage and measurement details](aros/README.md),
 
 For contributors: [adding another Apple model, Raspberry Pi or AArch64 platform](aros/PORTING.md).
 
+Download the [PomAROS 0.1.0 M1 preview](https://github.com/pomaros/xSysInfo/releases/tag/pomaros-v0.1.0). The binary targets the PomAROS native AArch64 SMP ABI; Raspberry Pi/upstream AROS requires a matching build and separate validation. See the [release compatibility table](releases/pomaros-0.1.0.md).
+
 ### Acknowledgements
 
 Thank you to **Stefan Reinauer and the xSysInfo contributors** for the original application, its classic interface and bitmap logo, and for making its source available. This fork builds on their work; original attribution and licence notices are preserved. Thanks also to **Reinhold P. Weicker** for Dhrystone, the benchmark underlying the speed comparisons.

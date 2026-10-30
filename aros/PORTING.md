@@ -23,6 +23,32 @@ For build options and benchmark semantics, see the [application README](README.m
 Do not create a separate benchmark or GUI for every machine. The common engine
 must run the same workload and measurement protocol on each target.
 
+## Raspberry Pi builds from AROS upstream
+
+AROS upstream lists `raspi-armhf`, `raspi-aarch64` and `raspi-aarch64-smp`
+configurations in its [target matrix](https://github.com/aros-development-team/AROS).
+Choose by the **running OS image**, not just the Pi's hardware capabilities.
+A 64-bit-capable Pi running ARM32 AROS cannot run an AArch64 executable.
+
+The M1 release binary uses the PomAROS SMP SDK ABI. It is not qualified against
+an upstream Pi image. For that image, obtain its matching SDK and build from
+this source with the appropriate UP/SMP setting. Resolve any missing API or ABI
+requirements before testing; do not bypass incompatible headers or substitute
+arbitrary libraries to get a successful link. The common engine needs the same
+timer, affinity and child-exit guarantees on both systems.
+
+Provider recognition happens inside the application, after loading/startup.
+It cannot repair incompatible Exec layouts or library calls, and there is no
+comprehensive preflight check that makes an unknown binary/runtime combination
+safe. The Pi provider can report missing optional board facts, but that is
+separate from compatibility of mandatory OS services.
+
+Builds should be named and qualified by OS/ABI, for example PomAROS native
+AArch64 SMP versus upstream AROS Raspberry Pi AArch64 UP/SMP. Do not fork the
+benchmark per board. If identical ABIs permit a common binary later, establish
+that with matching SDK contracts and target tests. Raspberry Pi OS/Linux is a
+different OS and needs an OS port, not merely this inventory provider.
+
 ## Where changes belong
 
 | File | Role |
