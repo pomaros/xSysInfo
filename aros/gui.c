@@ -3,6 +3,7 @@
 #include "sysinfo.h"
 #include "gui.h"
 #include "report.h"
+#include "classic_logo.h"
 #include <intuition/intuition.h>
 #include <graphics/text.h>
 #include <graphics/gfxmacros.h>
@@ -34,22 +35,10 @@ typedef struct {
     char status[128];
 } View;
 
-static int px(View *v,int x) { int inner=v->window->Width-v->window->BorderLeft-v->window->BorderRight; return v->window->BorderLeft+(inner-800*v->scale)/2+x*v->scale; }
-static int py(View *v,int y) { int inner=v->window->Height-v->window->BorderTop-v->window->BorderBottom; return v->window->BorderTop+(inner-480*v->scale)/2+y*v->scale; }
-static void set_scale(View *v,int scale)
-{
-    struct TextAttr attr = {(STRPTR)"topaz.font",(UWORD)(8*scale),0,0};
-    struct DiskFontHeader *scaled = NULL;
-    if(scale<1) scale=1;
-    if(scale>4) scale=4;
-    attr.ta_YSize=8*scale;
-    if(v->scale==scale && v->font) return;
-    if(scale>1) scaled=NewScaledDiskFont(v->base_font,&attr);
-    if(v->font && v->font!=v->base_font) CloseFont(v->font);
-    v->font=scaled?&scaled->dfh_TF:v->base_font;
-    v->scale=scaled?scale:1;
-    if(v->window) SetFont(v->window->RPort,v->font);
-}
+/* Amiga high-resolution pixels are twice as tall as they are wide. */
+static int px(View *v,int x) { int inner=v->window->Width-v->window->BorderLeft-v->window->BorderRight; return v->window->BorderLeft+(inner-640*v->scale)/2+x*v->scale; }
+static int py(View *v,int y) { int inner=v->window->Height-v->window->BorderTop-v->window->BorderBottom; return v->window->BorderTop+(inner-432*v->scale)/2+y*2*v->scale; }
+static void set_scale(View *v,int scale) { v->scale=scale<1?1:scale>4?4:scale; v->font=v->base_font; }
 static void rect(View *v,int x,int y,int w,int h,int color)
 {
     SetAPen(v->window->RPort,v->pen[color]);
@@ -60,86 +49,119 @@ static void line(View *v,int x,int y,int xx,int yy,int color)
     SetAPen(v->window->RPort,v->pen[color]);
     Move(v->window->RPort,px(v,x),py(v,y)); Draw(v->window->RPort,px(v,xx),py(v,yy));
 }
+/* Draw the ROM bitmap without smoothing, preserving the Amiga pixel aspect. */
 static void label(View *v,int x,int y,const char *s,int color)
 {
-    SetAPen(v->window->RPort,v->pen[color]); SetDrMd(v->window->RPort,JAM1);
-    Move(v->window->RPort,px(v,x),py(v,y)); Text(v->window->RPort,s,strlen(s));
+    struct TextFont *f=v->base_font;
+    const ULONG *loc=f->tf_CharLoc;
+    const UBYTE *bits=f->tf_CharData;
+    for(;*s && x+8<640;++s,x+=8) {
+        unsigned ch=(unsigned char)*s;
+        unsigned index=ch>=f->tf_LoChar && ch<=f->tf_HiChar?ch-f->tf_LoChar:f->tf_HiChar-f->tf_LoChar+1;
+        unsigned off=loc[index]>>16, width=loc[index]&65535, r,c;
+        for(r=0;r<f->tf_YSize;++r) for(c=0;c<width && c<8;++c)
+            if(bits[r*f->tf_Modulo+(off+c)/8] & (128>>((off+c)%8))) rect(v,x+c,y-7+r,1,1,color);
+    }
 }
 static void bevel(View *v,int x,int y,int w,int h,int sunken)
 {
-    line(v,x,y,x+w,y,sunken?DARK:WHITE); line(v,x,y,x,y+h,sunken?DARK:WHITE);
-    line(v,x,y+h,x+w,y+h,sunken?WHITE:DARK); line(v,x+w,y,x+w,y+h,sunken?WHITE:DARK);
+    rect(v,x,y,w,1,sunken?DARK:WHITE); rect(v,x,y,1,h,sunken?DARK:WHITE);
+    rect(v,x,y+h-1,w,1,sunken?WHITE:DARK); rect(v,x+w-1,y,1,h,sunken?WHITE:DARK);
 }
+/* Centre the ink bounds, not the nominal advance (glyphs have side bearings). */
 static void button(View *v,int x,int y,int w,const char *s,int selected)
 {
-    rect(v,x,y,w,30,BG); bevel(v,x,y,w,30,selected);
-    label(v,x+8,y+20,s,BLACK);
+    struct TextFont *f=v->base_font; const ULONG *loc=f->tf_CharLoc; const UBYTE *bits=f->tf_CharData;
+    int lo=9999,hi=-1,top=9999,bottom=-1,n;
+    for(n=0;s[n];++n) {
+        unsigned ch=(unsigned char)s[n], index=ch>=f->tf_LoChar && ch<=f->tf_HiChar?ch-f->tf_LoChar:f->tf_HiChar-f->tf_LoChar+1;
+        unsigned off=loc[index]>>16,r,c;
+        for(r=0;r<f->tf_YSize;++r) for(c=0;c<(loc[index]&65535) && c<8;++c)
+            if(bits[r*f->tf_Modulo+(off+c)/8] & (128>>((off+c)%8))) {
+                int xx=n*8+c; if(xx<lo) lo=xx; if(xx>hi) hi=xx;
+                if((int)r<top) top=r; if((int)r>bottom) bottom=r;
+            }
+    }
+    rect(v,x,y,w,11,BG); bevel(v,x,y,w,11,selected);
+    if(hi>=lo) label(v,x+(w-(hi-lo+1))/2-lo,y+(11-(bottom-top+1))/2-top+7,s,BLACK);
 }
-
+static void gradient(View *v,int x,int y,int w,int h,int left,int right)
+{
+    static const unsigned char bayer[4][4]={{0,8,2,10},{12,4,14,6},{3,11,1,9},{15,7,13,5}};
+    int xx,yy; rect(v,x,y,w,h,left);
+    for(yy=0;yy<h;++yy) for(xx=0;xx<w;++xx)
+        if(bayer[yy&3][xx&3]*w < xx*16) rect(v,x+xx,y+yy,1,1,right);
+}
+static void heading(View *v,int x,int y,int w,const char *name,const char *action)
+{
+    gradient(v,x,y,w,13,DARK,BG); bevel(v,x,y,w,13,0);
+    rect(v,x+2,y+2,(int)strlen(name)*8+2,9,DARK);
+    label(v,x+5,y+9,name,BLACK); label(v,x+4,y+8,name,WHITE);
+    if(action) { int aw=(int)strlen(action)*8+6; rect(v,x+w-aw,y+1,aw-1,11,DARK); bevel(v,x+w-aw,y,aw,13,0); label(v,x+w-aw+3,y+8,action,WHITE); }
+}
+static void field(View *v,int x,int y,int value_x,const char *name,const char *value)
+{ label(v,x,y,name,BLACK); label(v,value_x,y,value,WHITE); }
 static void draw(View *v)
 {
-    unsigned i, count = 0;
-    char text[128];
-    double rate = v->run->phase == 3 ? v->run->rate : 0;
-    double maximum = rate > 127077293 ? rate : 127077293;
+    unsigned i,r,c,selected=0; char text[128];
+    double rate=v->run->phase==3?v->run->rate:0;
+    double maximum=rate>127077293?rate:127077293;
     SetAPen(v->window->RPort,v->pen[BG]);
     RectFill(v->window->RPort,v->window->BorderLeft,v->window->BorderTop,v->window->Width-v->window->BorderRight-1,v->window->Height-v->window->BorderBottom-1);
-    bevel(v,8,8,784,225,1);
-    rect(v,10,10,780,28,DARK);
-    label(v,20,29,"xSysInfo - AArch64 SYSTEM INFORMATION",WHITE);
-    {
-        label(v,22,65,v->info->platform,BLACK);
-        label(v,22,85,v->info->os,BLACK);
-        snprintf(text,sizeof(text),"CPUs present: %u   online: %u",v->info->present,v->info->online);
-        label(v,22,108,text,BLACK);
-        snprintf(text,sizeof(text),"RAM: %llu MiB   Free: %llu MiB",(unsigned long long)(v->info->memory_total>>20),(unsigned long long)(v->info->memory_free>>20));
-        label(v,22,131,text,BLACK);
-        label(v,22,157,"Dhrystone 2.1 / 3 trials / median",BLACK);
-        label(v,22,180,"Amiga + measured M1 reference scores",BLACK);
-        label(v,22,204,"Select cores on the right; SPEED to run",BLACK);
+    gradient(v,1,1,319,21,BLUE,DARK); gradient(v,320,1,319,21,DARK,RED); bevel(v,0,0,640,23,0);
+    for(i=0;i<2;++i) for(r=0;r<XSYSINFO_LOGO_H;++r) for(c=0;c<XSYSINFO_LOGO_W;++c)
+        if(xsysinfo_logo_template[r][c/16] & (0x8000>>(c%16))) rect(v,7+c+(i?0:1),3+r+(i?0:1),1,1,i?WHITE:BLACK);
+    label(v,270,9,"xSysInfo - PomAROS AArch64",WHITE);
+    label(v,238,18,"https://github.com/pomaros/xSysInfo",WHITE);
+    bevel(v,0,24,366,74,0); heading(v,0,24,366,"SYSTEM SOFTWARE INSTALLED",">OVERVIEW");
+    field(v,4,45,104,"OS",v->info->os);
+    field(v,4,53,104,"CPU ABI","AArch64 / 64 bit");
+    field(v,4,61,104,"Graphics","Intuition / AROS");
+    field(v,4,69,104,"Benchmark","Dhrystone 2.1");
+    field(v,4,77,104,"Trials","3 / median");
+    field(v,4,85,104,"Mode",v->smp?"SMP aggregate":"SINGLE core");
+    snprintf(text,sizeof(text),"%u present / %u online",v->info->present,v->info->online); field(v,4,93,104,"CPUs",text);
+    bevel(v,368,24,272,192,0); heading(v,368,24,272,"HARDWARE INFORMATION",">MORE");
+    const char *machine=v->info->platform;
+    if(!strncmp(machine,"Apple ",6)) machine+=6;
+    snprintf(text,sizeof(text),"%.22s",machine); field(v,372,45,460,"Machine",text);
+    snprintf(text,sizeof(text),"%llu MB",(unsigned long long)(v->info->memory_total>>20)); field(v,372,53,460,"RAM",text);
+    snprintf(text,sizeof(text),"%llu MB",(unsigned long long)(v->info->memory_free>>20)); field(v,372,61,460,"Free",text);
+    label(v,372,72,"CPU / SELECT / Dhrystones",BLACK);
+    for(i=0;i<8 && v->cpu_page+i<v->info->online;++i) {
+        unsigned cpu=v->cpu_page+i,k; double measured=0;
+        for(k=0;k<v->run->count && v->run->phase==3;++k) if(v->run->workers[k].cpu==cpu) measured=v->run->per_cpu[k];
+        const char *name=v->info->cpus[cpu].name;
+        if(!strncmp(name,"Apple ",6)) name+=6;
+        snprintf(text,sizeof(text),"[%c] %u %.*s",v->selected[cpu]?'x':' ',cpu,(int)(strcspn(name," (")<10?strcspn(name," ("):10),name); label(v,372,82+i*11,text,BLACK);
+        if(v->run->phase==3) snprintf(text,sizeof(text),"%5.2fM",measured/1e6); else strcpy(text,"    --");
+        label(v,576,82+i*11,text,WHITE);
+
     }
-    line(v,427,40,427,230,DARK);
-    for (i = 0; i < 7 && v->cpu_page+i < v->info->online; ++i) {
-        unsigned cpu = v->cpu_page+i;
-        AACpu *c = &v->info->cpus[cpu];
-        snprintf(text,sizeof(text),"[%c] CPU %u C%u %.26s",v->selected[cpu]?'x':' ',cpu,c->cluster,c->name);
-        label(v,440,57+i*21,text,BLACK);
-        if (v->run->phase == 3) {
-            unsigned k;
-            for(k=0;k<v->run->count;++k) if(v->run->workers[k].cpu==cpu) {
-                snprintf(text,sizeof(text),"    %.3f M Dhrystones/s",v->run->per_cpu[k]/1000000.0);
-                label(v,440,66+i*21,text,BLUE);
-            }
-        }
+    button(v,372,189,80,"PREV",0); button(v,456,189,80,"NEXT",0); button(v,540,189,96,"ALL",0);
+    button(v,372,203,128,"SINGLE",!v->smp); button(v,504,203,132,"SMP",v->smp);
+    bevel(v,0,98,366,118,0); heading(v,0,98,366,"SPEED COMPARISONS",v->active?">BUSY":">READY");
+    for(i=0;i<=4;++i) { int x=178+i*45; line(v,x,112,x,117,BLACK); snprintf(text,sizeof(text),"%u",i*25); label(v,x-(i==4?22:0),117,text,BLACK); }
+    label(v,4,125,"Dhrystones",BLACK);
+    if(rate>=1000000) snprintf(text,sizeof(text),"%.1fM",rate/1e6); else snprintf(text,sizeof(text),"%.0f",rate);
+    label(v,88,125,text,WHITE);
+    label(v,148,125,"You",WHITE);
+    bevel(v,178,119,182,8,1); if(rate>0) rect(v,179,120,(int)(179*rate/maximum)+1,5,RED);
+    for(i=0;i<AA_REFERENCE_COUNT;++i) {
+        int y=128+i*8;
+        const char *names[]={"A600 68000 7MHz","B2000 68000 7M","A1200 EC020 14M","A3000 68030 25M","A4000 68040 25M","A4000 68060 50M","M1 Firestorm x1","M1 SMP x8"};
+        label(v,4,y+7,names[i],BLACK);
+        if(rate>0) snprintf(text,sizeof(text),"%5.1f",rate/aa_references[i].dhry); else strcpy(text,"   --");
+        /* Keep long modern/Amiga ratios within their column. */
+        if(strlen(text)>6) snprintf(text,sizeof(text),"%.0fk",rate/aa_references[i].dhry/1000);
+        label(v,128,y+7,text,WHITE);
+        bevel(v,178,y,182,8,1); rect(v,179,y+1,(int)(179*aa_references[i].dhry/maximum)+1,5,BLUE);
     }
-    button(v,440,204,105,"PREV",0); button(v,555,204,105,"NEXT",0);
-    button(v,670,204,110,"ALL",0);
-    rect(v,8,242,784,27,DARK); label(v,18,261,"SPEED COMPARISONS",WHITE);
-    label(v,440,261,(v->run->phase == 3 ? v->run->count > 1 : v->smp)?"SMP - cumulative throughput":"SINGLE - one CPU",WHITE);
-    snprintf(text,sizeof(text),"Dhrystones/s  %.0f",rate); label(v,18,291,text,BLACK);
-    rect(v,370,275,410,20,BG); bevel(v,370,275,410,20,1);
-    if (rate > 0) rect(v,372,277,(int)(406*rate/maximum),16,RED);
-    for (i = 0; i < AA_REFERENCE_COUNT; ++i) {
-        int y = 300+i*14;
-        label(v,18,y+10,aa_references[i].name,BLACK);
-        if (rate > 0) snprintf(text,sizeof(text),"%8.2fx",rate/aa_references[i].dhry);
-        else strcpy(text,"      --");
-        label(v,245,y+10,text,BLACK);
-        bevel(v,370,y,410,13,1);
-        rect(v,372,y+2,(int)(406*aa_references[i].dhry/maximum)+1,9,BLUE);
-    }
-    for (i=0;i<v->info->online;++i) count += !!v->selected[i];
-    snprintf(text,sizeof(text),"DMIPS %.2f  | selected %u",rate/1757.0,count);
-    label(v,18,426,text,BLACK);
-    if (v->single > 0 && v->run->count > 1 && rate > 0) {
-        snprintf(text,sizeof(text),"Speedup %.2fx",rate/v->single); label(v,440,426,text,BLACK);
-    }
-    button(v,8,439,77,"QUIT",0); button(v,92,439,95,"MEMORY",0);
-    button(v,194,439,95,"BOARDS",0); button(v,296,439,90,"DRIVES",0);
-    button(v,393,439,90,v->active?"CANCEL":"SPEED",v->active);
-    button(v,490,439,90,"PRINT",0); button(v,587,439,95,"SINGLE",!v->smp);
-    button(v,689,439,100,"SMP",v->smp);
-    /* Window title carries status without changing the classic panel layout. */
+    for(i=0;i<v->info->online;++i) selected+=!!v->selected[i];
+    snprintf(text,sizeof(text),"DMIPS %.0f",rate/1757); label(v,4,200,text,BLACK);
+    snprintf(text,sizeof(text),"%u CPUs / %s",selected,v->smp?"SMP":"ONE"); label(v,4,211,text,BLACK);
+    button(v,178,193,60,"QUIT",0); button(v,239,193,61,"MEMORY",0); button(v,301,193,61,"BOARDS",0);
+    button(v,178,205,60,"DRIVES",0); button(v,239,205,61,v->active?"CANCEL":"SPEED",v->active); button(v,301,205,61,"PRINT",0);
     SetWindowTitles(v->window,(CONST_STRPTR)v->status,(CONST_STRPTR)-1);
 }
 
@@ -187,7 +209,7 @@ int aa_gui(AAInfo *info)
     v->info = info; v->run = calloc(1,sizeof(*v->run));
     v->screen = LockPubScreen(NULL); v->base_font = OpenFont(&attr);
     if (!v->run || !v->screen || !v->base_font) goto out;
-    set_scale(v,v->screen->Width>=1640 && v->screen->Height>=1000?2:1);
+    set_scale(v,v->screen->Width>=1320 && v->screen->Height>=880?2:1);
     for (i=0;i<PEN_COUNT;++i) {
         ULONG r = ((rgb[i]>>16)&255)*0x01010101UL, g = ((rgb[i]>>8)&255)*0x01010101UL, b = (rgb[i]&255)*0x01010101UL;
         v->pen[i] = ObtainBestPen(v->screen->ViewPort.ColorMap,r,g,b,TAG_DONE);
@@ -195,10 +217,10 @@ int aa_gui(AAInfo *info)
     }
     strcpy(v->status,"xSysInfo - ready");
     v->window = OpenWindowTags(NULL,WA_PubScreen,(IPTR)v->screen,WA_Title,(IPTR)v->status,
-        WA_InnerWidth,800*v->scale,WA_InnerHeight,480*v->scale,WA_MinWidth,800,WA_MinHeight,480,
-        WA_MaxWidth,-1,WA_MaxHeight,-1,WA_CloseGadget,TRUE,WA_DragBar,TRUE,
-        WA_DepthGadget,TRUE,WA_SizeGadget,TRUE,WA_Activate,TRUE,
-        WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|IDCMP_NEWSIZE|IDCMP_MOUSEBUTTONS|IDCMP_VANILLAKEY,
+        WA_InnerWidth,640*v->scale,WA_InnerHeight,432*v->scale,
+        WA_CloseGadget,TRUE,WA_DragBar,TRUE,
+        WA_DepthGadget,TRUE,WA_Activate,TRUE,
+        WA_IDCMP,IDCMP_CLOSEWINDOW|IDCMP_REFRESHWINDOW|IDCMP_MOUSEBUTTONS|IDCMP_VANILLAKEY,
         TAG_DONE);
     if (!v->window) goto out;
     SetFont(v->window->RPort,v->font);
@@ -210,16 +232,12 @@ int aa_gui(AAInfo *info)
         while ((m = (struct IntuiMessage *)GetMsg(v->window->UserPort))) {
             ULONG cls = m->Class; UWORD code = m->Code;
             int x = (m->MouseX-px(v,0))/v->scale;
-            int y = (m->MouseY-py(v,0))/v->scale;
+            int y = (m->MouseY-py(v,0))/(2*v->scale);
             ReplyMsg((struct Message *)m);
             if (cls == IDCMP_CLOSEWINDOW || (cls==IDCMP_VANILLAKEY && (code=='q'||code==27))) {
                 v->closing=1; v->pending_smp=0; if(v->active) aa_cancel(v->run);
             } else if (cls == IDCMP_REFRESHWINDOW) {
                 BeginRefresh(v->window); draw(v); EndRefresh(v->window,TRUE);
-            } else if (cls == IDCMP_NEWSIZE) {
-                int sx=(v->window->Width-v->window->BorderLeft-v->window->BorderRight)/800;
-                int sy=(v->window->Height-v->window->BorderTop-v->window->BorderBottom)/480;
-                set_scale(v,sx<sy?sx:sy); redraw=1;
             }
             else if (cls == IDCMP_VANILLAKEY && !v->closing) {
                 redraw=1;
@@ -229,28 +247,30 @@ int aa_gui(AAInfo *info)
                 } else if(code=='m' && !v->active) v->smp=!v->smp;
                 else if(code=='p' && !v->active) save_report(v);
                 else if(!v->active && (code=='b'||code=='d'||code=='e'))
-                    xsi_gui_run(v->info->inventory,0,code=='e'?1:code=='d'?2:0);
+                    { xsi_gui_run(v->info->inventory,0,code=='e'?1:code=='d'?2:0); ActivateWindow(v->window); }
             }
             else if (cls == IDCMP_MOUSEBUTTONS && code == SELECTUP && !v->closing) {
                 redraw=1;
-                if (y>=439 && y<469) {
-                    if (x<85) { v->closing=1; v->pending_smp=0; if(v->active) aa_cancel(v->run); }
-                    else if (x>=92 && x<187) (!v->active ? xsi_gui_run(v->info->inventory,0,1) : 0);
-                    else if (x>=194 && x<289) (!v->active ? xsi_gui_run(v->info->inventory,0,0) : 0);
-                    else if (x>=296 && x<386) (!v->active ? xsi_gui_run(v->info->inventory,0,2) : 0);
-                    else if (x>=393 && x<483) {
+                if (x>=178 && x<362 && y>=193 && y<216) {
+                    int col=(x-178)/61, row=y>=205;
+                    if(!row && col==0) { v->closing=1; v->pending_smp=0; if(v->active) aa_cancel(v->run); }
+                    else if(row && col==1) {
                         if(v->active) { v->pending_smp=0; aa_cancel(v->run); }
                         else { v->pending_smp=v->smp; start(v,v->smp); }
-                    } else if (x>=490 && x<580 && !v->active) save_report(v);
-                    else if (x>=587 && !v->active) v->smp=x>=689;
-                } else if (!v->active && x>=440 && y>=47 && y<194) {
-                    unsigned cpu = v->cpu_page+(y-47)/21;
-                    if(cpu<info->online) v->selected[cpu]^=1;
-                } else if (y>=204 && y<234 && x>=440) {
-                    if(x<545 && v->cpu_page>=7) v->cpu_page-=7;
-                    else if(x>=555 && x<660 && v->cpu_page+7<info->online) v->cpu_page+=7;
-                    else if(x>=670 && !v->active) for(i=0;i<info->online;++i) v->selected[i]=1;
-                }
+                    } else if(!v->active) {
+                        if(row && col==2) save_report(v);
+                        else { xsi_gui_run(v->info->inventory,0,row?2:col==1?1:0); ActivateWindow(v->window); }
+                    }
+                } else if(!v->active && x>=372 && y>=75 && y<166) {
+                    unsigned cpu=v->cpu_page+(y-75)/11; if(cpu<info->online) v->selected[cpu]^=1;
+                } else if(x>=372 && y>=189 && y<200) {
+                    if(x<452 && v->cpu_page>=8) v->cpu_page-=8;
+                    else if(x>=456 && x<536 && v->cpu_page+8<info->online) v->cpu_page+=8;
+                    else if(x>=540 && !v->active) for(i=0;i<info->online;++i) v->selected[i]=1;
+                } else if(x>=372 && y>=203 && !v->active) v->smp=x>=504;
+                else if(x>=592 && y>=24 && y<37 && !v->active) { xsi_gui_run(v->info->inventory,0,0); ActivateWindow(v->window); }
+                else if(x>=284 && x<366 && y>=24 && y<37 && !v->active) { xsi_gui_run(v->info->inventory,0,0); ActivateWindow(v->window); }
+
             }
         }
         if(v->active) {

@@ -4,11 +4,15 @@
 # xSysInfo for PomAROS AArch64
 
 xSysInfo is the native C system-information and Dhrystone application in
-`aros/`. Its classic gray relief panels, red measured bar, blue reference bars
-and Amiga comparison table follow xSysInfo. On a large display the interface
-uses a pixel-faithful 2x Topaz font and 2x controls. Resizing the main window
-selects integer scales (up to 4x), centering the layout without stretching glyphs.
-The inventory views also use 2x on sufficiently large screens. The original m68k program in `src/`
+`aros/`. The dashboard follows the upstream classic layout: its original bitmap
+logo, blue/gray/red dithered banner, software panel above the comparison table,
+tall hardware panel and six action buttons in a three-column grid. Bitmap text
+uses the tall Amiga pixel aspect, with black labels and white values. Button
+text is centered using the glyph ink bounds in both axes.
+
+The window has a fixed size and no resize gadget. It selects 1x or 2x at opening
+according to the screen size, preserving all geometry. The detailed inventory
+views use 2x on sufficiently large screens. The original m68k program in `src/`
 is a separate upstream implementation.
 
 ## Use
@@ -163,6 +167,7 @@ Other Apple models and Raspberry Pi require their own runtime validation.
 
 New fork application/engine files use [MIT](LICENSE.MIT), Copyright (c) 2026 John Knipper.
 The existing inventory files retain BSD-2-Clause and their original notices.
+The classic logo bitmap retains upstream BSD-2-Clause attribution.
 The reentrant Dhrystone files retain Reinhold P. Weicker's attribution and the
 xSysInfo BSD-2-Clause grant in `LICENSE.xSysInfo`; upstream code is not relicensed.
 The benchmark's provenance and adaptations are described above.

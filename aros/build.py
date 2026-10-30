@@ -46,7 +46,7 @@ if binary[:4] != b'\x7fELF' or binary[4:6] != b'\x02\x01' or int.from_bytes(bina
 sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
 (a.out/'build.json').write_text(json.dumps(dict(command=command, sdk=str(sdk),
     compiler=subprocess.check_output([str(cc), '--version'], text=True),
-    sources={s:sha(root/s) for s in sources+['sysinfo.h', 'dhry.h']},
+    sources={s:sha(root/s) for s in sources+['sysinfo.h', 'dhry.h', 'classic_logo.h']},
     binary_sha256=sha(a.out/'xSysInfo'), startup_sha256=sha(dev/'lib/startup.o')),
     indent=2)+'\n')
 print(a.out/'xSysInfo')
