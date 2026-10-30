@@ -125,6 +125,7 @@ static void draw(View *v)
     bevel(v,368,24,272,192,0); heading(v,368,24,272,"HARDWARE INFORMATION",">MORE");
     const char *machine=v->info->platform;
     if(!strncmp(machine,"Apple ",6)) machine+=6;
+    if(!strncmp(machine,"Raspberry Pi ",13)) machine+=10;
     snprintf(text,sizeof(text),"%.22s",machine); field(v,372,45,460,"Machine",text);
     snprintf(text,sizeof(text),"%llu MB",(unsigned long long)(v->info->memory_total>>20)); field(v,372,53,460,"RAM",text);
     snprintf(text,sizeof(text),"%llu MB",(unsigned long long)(v->info->memory_free>>20)); field(v,372,61,460,"Free",text);

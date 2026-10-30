@@ -178,7 +178,7 @@ logical CPU IDs; it is not a hardware-affinity or performance test.
 
 Hardware qualification is specific to the tested executable and platform.
 The M1 reference reports above retain the measured scores and trial results.
-Other Apple models and Raspberry Pi require their own runtime validation.
+The original release executable has been reported working unchanged on real Pi 500+ and Pi 3B+ systems running AROS AArch64 SMP; see the [release compatibility record](../releases/pomaros-0.1.0.md) for scope and refreshed-build limitations. Other platforms require runtime validation.
 
 ## Licences
 

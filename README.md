@@ -1,16 +1,24 @@
 # xSysInfo — PomAROS AArch64 fork
 
-This is the PomAROS AArch64 fork of [Stefan Reinauer's xSysInfo](https://github.com/reinauer/xSysInfo). It adds native SINGLE/SMP Dhrystone benchmarks and system inventory, starting with Apple M1, while preserving the classic interface and the six historical Amiga reference values.
+This is the PomAROS AArch64 fork of [Stefan Reinauer's xSysInfo](https://github.com/reinauer/xSysInfo). It adds native SINGLE/SMP Dhrystone benchmarks and system inventory, for Apple M1 and compatible Raspberry Pi AROS systems, while preserving the classic interface and the six historical Amiga reference values.
 
 ![xSysInfo running natively on PomAROS on a MacBook Air M1, with an eight-core SMP result](docs/xsysinfo-pomaros-m1.png)
 
 Actual native M1 capture: the six Amiga bars use a fixed 0–40,000 Dhrystones/s scale, with `+` marking overflow. M1 mono and SMP ratios are shown separately below the graph. Both ratios compare the current result against the corresponding reference; the capture shows an eight-core SMP result. The window has a fixed size and centered button labels.
 
-See [AArch64 build instructions, usage and measurement details](aros/README.md), including the [recorded M1 references](aros/references/m1.json). Other Apple models and Raspberry Pi require their own runtime qualification.
+See [AArch64 build instructions, usage and measurement details](aros/README.md), including the [recorded M1 references](aros/references/m1.json). The original release executable has also been reported working on real Raspberry Pi 500+ and Pi 3B+ hardware running AROS AArch64 SMP.
 
 For contributors: [adding another Apple model, Raspberry Pi or AArch64 platform](aros/PORTING.md).
 
-Download the [PomAROS 0.1.0 M1 preview](https://github.com/pomaros/xSysInfo/releases/tag/pomaros-v0.1.0). The binary targets the PomAROS native AArch64 SMP ABI; Raspberry Pi/upstream AROS requires a matching build and separate validation. See the [release compatibility table](releases/pomaros-0.1.0.md).
+Download the [PomAROS / AROS AArch64 SMP 0.1.0 preview](https://github.com/pomaros/xSysInfo/releases/tag/pomaros-v0.1.0). The same original executable runs on PomAROS M1 and was reported working on Raspberry Pi 500+ and Pi 3B+ under AROS AArch64 SMP: no Pi-specific rebuild was needed. This does not cover AROS ARM32, AArch64 UP, or Raspberry Pi OS/Linux. The refreshed download fixes Pi provider selection and reads the model from the boot Device Tree through the upstream `openfirmware.resource` API. See the [release compatibility table](releases/pomaros-0.1.0.md).
+
+![The same xSysInfo AArch64 SMP release executable running on a real Raspberry Pi 500+, with four Cortex-A76 workers](docs/xsysinfo-raspberry-pi500.webp)
+
+User-supplied Pi 500+ capture: approximately 30.3 million Dhrystones/s across
+four Cortex-A76 workers, on AROS Exec 51.10. Operation was also reported on a Pi
+3B+. This demonstrates reported binary compatibility of the original M1 release
+with these AROS AArch64 SMP installations. The capture predates the Pi model
+identification fix, which is why it displays `common`.
 
 ### Acknowledgements
 

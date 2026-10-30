@@ -48,6 +48,16 @@ int xsi_has_resource(const char *name)
     return 0;
 }
 
+static const char *dt_model;
+static uint32_t dt_length;
+static int dt_available, dt_root;
+void *OpenResource(const char *name) { return dt_available && !strcmp(name,"openfirmware.resource") ? (void *)1 : NULL; }
+void *xsi_test_openkey(void *base, const char *path) { return base && dt_root && !strcmp(path,"/") ? (void *)2 : NULL; }
+void *OF_FindProperty(void *node, const char *name) { return node && dt_model && !strcmp(name,"model") ? (void *)3 : NULL; }
+uint32_t OF_GetPropLen(void *prop) { (void)prop; return dt_length; }
+void *OF_GetPropValue(void *prop) { (void)prop; return (void *)dt_model; }
+void OF_CloseKey(void *node) { (void)node; }
+
 /* ---- report capture --------------------------------------------------- */
 
 static char report_buf[64 * 1024];
@@ -238,6 +248,31 @@ static void test_provider_raspi(void)
     CHECK(xsi_provider_raspi(&m, NULL) == 0, "missing architecture is not a Pi");
     CHECK(xsi_provider_raspi(&m, "aarch64-raspi-hosted") == 0, "do not infer native board from ambiguous suffix");
     CHECK(m.sections[XSI_SEC_PLATFORM].count == 0, "rejected identifiers do not add fields");
+    dt_available = dt_root = 1;
+    dt_model = "Raspberry Pi 500 Plus Rev 1.0"; dt_length = strlen(dt_model)+1;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(!strcmp(text_of(&m,"board.model"),dt_model), "model copied from Device Tree");
+    CHECK(strstr(xsi_find(&m,"board.model")->source,"openfirmware.resource") != NULL,"model provenance");
+    dt_model = "Raspberry Pi 3 Model B Plus Rev 1.3"; dt_length = strlen(dt_model)+1;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(!strcmp(text_of(&m,"board.model"),dt_model), "3B+ model");
+    dt_length--; /* No NUL within the advertised length. */
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(xsi_find(&m,"board.model")->state == XSI_UNAVAILABLE,"unterminated property rejected");
+    dt_model = ""; dt_length = 1;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(xsi_find(&m,"board.model")->state == XSI_UNAVAILABLE,"empty model rejected");
+    dt_model = "x"; dt_length = 4097;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(xsi_find(&m,"board.model")->state == XSI_UNAVAILABLE,"oversized property rejected before read");
+    dt_length = 0;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(xsi_find(&m,"board.model")->state == XSI_UNAVAILABLE,"zero length rejected");
+    dt_root = 0;
+    xsi_model_init(&m); xsi_provider_raspi(&m,"aarch64-raspi");
+    CHECK(xsi_find(&m,"board.model")->state == XSI_UNAVAILABLE,"absent root handled");
+    dt_available = 0; dt_model = NULL;
+
 }
 
 static void test_no_provider(void)

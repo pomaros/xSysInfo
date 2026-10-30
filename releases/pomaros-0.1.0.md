@@ -1,4 +1,4 @@
-# xSysInfo for PomAROS 0.1.0 — M1 preview
+# xSysInfo for PomAROS 0.1.0 — PomAROS / Raspberry Pi preview
 
 First public PomAROS application prerelease, based on Stefan Reinauer's
 [xSysInfo](https://github.com/reinauer/xSysInfo). Thank you to Stefan and the
@@ -8,7 +8,7 @@ upstream contributors, and to Reinhold P. Weicker for Dhrystone.
 
 `xSysInfo-0.1.0-pomaros-native-aarch64-smp.zip` contains the native application,
 licence notices, build metadata and instructions. Check the archive against
-`SHA256SUMS`, extract it, and copy the application directory to your PomAROS
+`SHA256SUMS`, extract it, and copy the application directory to your PomAROS or compatible AROS AArch64 SMP
 volume. From an AROS Shell in that directory:
 
 ```text
@@ -35,40 +35,52 @@ extension instructions are in [the porting guide](https://github.com/pomaros/xSy
 
 ## Compatibility and qualification
 
-The downloadable binary is **PomAROS native AArch64, SMP ABI**, validated on a
-MacBook Air M1 (2020), Exec 51.12, using the matching PomAROS SDK with common-core
-revision `e009c0b4c5466ceefe13ef15b94e0e9444166716`. That is the tested build,
-not a promise of compatibility with every Exec 51.12 installation. It is not a
-universal ARM64 executable or a macOS/Linux application.
+The executable targets the **native AROS AArch64 SMP ABI**. The original
+release executable was tested on a MacBook Air M1 (2020), PomAROS Exec 51.12,
+and was subsequently **reported working without recompilation on real
+Raspberry Pi 500+ and Pi 3B+ hardware** running AROS AArch64 SMP. The Pi screenshot
+shows Exec 51.10, four Cortex-A76 CPUs and a completed four-worker SMP result.
+The exact OS distribution/build identifiers for the two physical Pi systems
+have not been supplied.
 
-| Running system | Status for this binary |
+| Running system | Evidence |
 |---|---|
-| Matching PomAROS native M1 runtime | Native SINGLE/SMP, inventory, GUI and export exercised |
-| Another PomAROS Apple model | Not runtime-qualified |
-| AROS upstream `raspi-aarch64-smp` | Not binary-qualified; build against that runtime's SDK and validate |
-| AROS upstream `raspi-aarch64` (UP) | Requires a matching UP build; do not use this SMP-ABI binary |
-| AROS upstream `raspi-armhf` | ARM32: requires an instruction-set/build port, not this AArch64 binary |
-| Raspberry Pi OS / Linux, macOS | Different OS ABI; cannot run this native AROS application directly |
+| PomAROS native M1 | Original executable: SINGLE/SMP, inventory, GUI and export exercised |
+| Raspberry Pi 500+ / AROS AArch64 SMP | Original executable: user-reported operation; supplied screenshot shows completed SMP benchmark |
+| Raspberry Pi 3B+ / AROS AArch64 SMP | Original executable: user-reported operation |
+| Official upstream 2026-10-30 `raspi-aarch64-smp`, QEMU raspi3b | Original executable: SINGLE/SMP, inventory and GUI open/close passed |
+| Another Apple model or Pi OS build | Requires validation with that runtime |
+| AROS AArch64 UP or ARM32 | Requires a separate matching build; this archive uses the AArch64 SMP ABI |
+| Raspberry Pi OS / Linux, macOS | Different OS ABI |
 
-The Raspberry Pi provider reads OS information; it does not select an ABI,
-load missing OS services or translate binaries. Source compatibility with an
-upstream SDK must also be checked. Optional board information may be unavailable,
-but incompatible task layouts or missing required services can cause failure or
-a crash. There is no comprehensive runtime ABI guard in this prerelease.
+![Original release on a real Pi 500+, four-worker SMP result](https://raw.githubusercontent.com/pomaros/xSysInfo/pomaros/docs/xsysinfo-raspberry-pi500.webp)
 
-The intended distribution model is one shared application source and separately
-qualified builds for each OS/ABI combination, not one code fork per board. A
-shared binary across compatible AArch64 boards is possible only after proving
-that their SDK/runtime contracts match. See the porting guide for timer,
-affinity, worker lifecycle and inventory-locking requirements.
+**Existing release updated in place:** the refreshed executable recognizes the
+upstream `aarch64-raspi` identifier instead of displaying `common`, and reads
+`/model` through `openfirmware.resource`. The full model appears in the inventory;
+the dashboard uses an abbreviated display name. If the resource/property is
+absent or invalid, the Pi family remains identified and the model is unavailable.
+No OS or driver changes are required. Re-download the ZIP and its `SHA256SUMS`
+together; checksums differ from the initial upload.
+
+The physical M1/Pi reports concern the original executable. The refreshed
+executable passed a separate upstream QEMU check of model detection, SINGLE/SMP
+and GUI open/close; those original hardware observations
+do not constitute a physical retest of the refreshed build. The archived M1
+references retain their original executable and measurement provenance.
+
+The release tag and GitHub-generated source archives describe the initial upload.
+For the refreshed binary, use the attached `xSysInfo-0.1.0-updated-source.tar.gz`
+and the exact source commit recorded in `build-info.json`.
 
 ## Validation and limitations
 
-Host inventory and engine checks passed under ASan/UBSan. The application was
-built with native SMP and VM UP SDKs; this release ships only the native M1
-binary. Native evidence includes eight-worker SMP reports, direct display
-captures and exact executable/source binding. The full VM desktop acceptance
-gate was not qualified; no VM or Raspberry Pi binary is included.
+Host inventory/provider and benchmark engine tests run under ASan/UBSan.
+The [compatibility record](https://github.com/pomaros/xSysInfo/blob/pomaros/aros/compatibility/upstream-qemu.md)
+distinguishes the original binary's QEMU evidence, physical user reports and
+refreshed-binary validation. Emulated scores are not hardware performance
+references. Other runtime combinations require validation; this prerelease has
+no comprehensive ABI guard.
 
 Frequency and thermal conditions of the saved M1 references were not
 independently measured; those values describe observed PomAROS performance,

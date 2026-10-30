@@ -8,7 +8,7 @@ SRC = test_model.c ../model.c ../report.c ../provider_apple.c ../provider_hosted
 test: build/test_model
 	./build/test_model
 
-build/test_model: $(SRC) ../model.h ../report.h ../collect.h
+build/test_model: $(SRC) ../model.h ../report.h ../collect.h $(wildcard shim/proto/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -Ishim -o $@ $(SRC)
 

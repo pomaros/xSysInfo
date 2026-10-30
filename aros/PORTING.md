@@ -15,7 +15,7 @@ For build options and benchmark semantics, see the [application README](README.m
 | Target | Starting point |
 |---|---|
 | Another Apple M-series model | Try the common application first. The `apple-` provider already reads the OS board model. Extend optional identification only when the OS exposes more facts. |
-| Raspberry Pi | Try the existing `raspi-` provider. Its recognition does not imply that the board model, sensors or SMP have been qualified. |
+| Raspberry Pi | Use the existing Pi provider (`raspi-...`, `aarch64-raspi`, `arm-raspi`). Its recognition does not imply that the board model, sensors or SMP have been qualified. |
 | Another native AArch64 board | Try the generic fallback first; add a provider only for additional board information. |
 | AROS hosted on another OS | Check the hosted provider and the hosted ABI; distinguish guest resources from host hardware. |
 | A different instruction set or a non-AROS OS | This needs a build/ABI port, and potentially a new OS adapter. A provider alone is insufficient. |
@@ -33,12 +33,20 @@ configurations in its [target matrix](https://github.com/aros-development-team/A
 Choose by the **running OS image**, not just the Pi's hardware capabilities.
 A 64-bit-capable Pi running ARM32 AROS cannot run an AArch64 executable.
 
-The M1 release binary uses the PomAROS SMP SDK ABI. It is not qualified against
-an upstream Pi image. For that image, obtain its matching SDK and build from
-this source with the appropriate UP/SMP setting. Resolve any missing API or ABI
-requirements before testing; do not bypass incompatible headers or substitute
-arbitrary libraries to get a successful link. The common engine needs the same
-timer, affinity and child-exit guarantees on both systems.
+The original M1 release executable was reported working unchanged on real Pi
+500+ and Pi 3B+ systems running AROS AArch64 SMP, and exercised under the official
+2026-10-30 upstream SMP image in QEMU. See the release compatibility table for
+the scope of those observations. For an incompatible runtime, obtain its matching
+SDK and build with the appropriate UP/SMP setting. Resolve missing API or ABI
+requirements before testing; do not substitute arbitrary libraries to force a
+successful link. The common engine needs the same timer, affinity and child-exit
+guarantees on each system.
+
+The Pi provider optionally opens `openfirmware.resource` and reads `/model`.
+Firmware property lengths and string termination are checked before copying;
+missing data leaves the board model unavailable. This uses an existing upstream
+API and requires no OS modification. Preserve the full model in reports and
+keep dashboard abbreviations confined to presentation.
 
 Provider recognition happens inside the application, after loading/startup.
 It cannot repair incompatible Exec layouts or library calls, and there is no
@@ -48,8 +56,8 @@ separate from compatibility of mandatory OS services.
 
 Builds should be named and qualified by OS/ABI, for example PomAROS native
 AArch64 SMP versus upstream AROS Raspberry Pi AArch64 UP/SMP. Do not fork the
-benchmark per board. If identical ABIs permit a common binary later, establish
-that with matching SDK contracts and target tests. Raspberry Pi OS/Linux is a
+benchmark per board. A common binary is appropriate where ABI compatibility and runtime tests
+support it. Raspberry Pi OS/Linux is a
 different OS and needs an OS port, not merely this inventory provider.
 
 ## Where changes belong

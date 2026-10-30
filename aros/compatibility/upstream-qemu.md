@@ -45,11 +45,10 @@ real Pi performance, all inventory views or every cancellation path.
 
 The release displays the generic provider because it recognizes `raspi-...`,
 whereas upstream `KrnGetSystemAttr(KATTR_Architecture)` returns `aarch64-raspi`
-(and `arm-raspi` on ARM32). The candidate in this compatibility branch accepts
-those exact upstream identifiers in the Raspberry Pi provider. It requires no
-OS change, and its host provider tests pass. The binary tested above predates
-this correction; the corrected application has not been runtime-qualified by
-this experiment. ARM32 identification support is not an ARM32 executable port.
+(and `arm-raspi` on ARM32). The corrected provider accepts those exact upstream identifiers. It also reads
+the board model from `/model` using the public `openfirmware.resource` API.
+The original binary observations above predate these corrections. ARM32
+identification support is not an ARM32 executable port.
 
 ## Reproduction outline
 
@@ -81,3 +80,32 @@ was not used to assert absence of leftover worker processes. A complete gate
 should add an unambiguous worker-exit observation, normal-duration/repeated
 runs, cancellation and inventory/export checks. Emulated Dhrystone scores must
 not be added as Raspberry Pi hardware reference values.
+
+## Physical hardware reports
+
+The user reported that the original release executable works on both a real
+Raspberry Pi 500+ and a Pi 3B+, with `common` identification as the only reported
+issue. The supplied Pi screenshot shows Exec 51.10, four Cortex-A76 CPUs,
+a completed SMP result of about 30.3 million Dhrystones/s and balanced worker
+contributions. Exact distribution/build identifiers and raw reports were not
+supplied. This is user-reported compatibility evidence for the original
+executable, rather than an automated hardware qualification of a refreshed build.
+
+## Refreshed executable
+
+The refreshed release executable has SHA-256
+`7694a2487bc9c7d3568da361ff84935ad4b7787f989bb17d720f6a7efbc7a5d6`.
+It uses an isolated snapshot of the original release SDK/runtime and the same
+compiler and benchmark flags. No OS sources or installed SDKs were modified.
+
+On the same official upstream distribution and QEMU configuration, it completed
+`FULL CLI MS 100` and `SMP MS 100`, each with `RESULT PASS` and return code 0.
+The full report selected provider `raspi` and read `Raspberry Pi 3 Model B`
+from `openfirmware.resource` (`/model`). The GUI displayed `Pi 3 Model B`,
+opened successfully, and returned 0 after the emulated `q` key; the Shell reached
+its end marker. The executable read back from the SD image matched the build
+hash. Host provider tests passed 66 checks under ASan/UBSan, including missing,
+empty, oversized and unterminated Device Tree properties; the host engine suite
+also passed. The refreshed executable has not been retested on physical M1 or
+Pi hardware. Normal-duration measurements, cancellation and all inventory/export
+paths are outside this scoped QEMU run.
