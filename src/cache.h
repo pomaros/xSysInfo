@@ -20,6 +20,14 @@ ULONG convert68030to68040(ULONG input);
 ULONG convert68040to68030(ULONG input);
 ULONG convertFlagsFor68040(ULONG input);
 
+/* Frontend-independent identifiers for the available cache controls. */
+typedef enum {
+    CACHE_NONE, CACHE_ICACHE, CACHE_DCACHE, CACHE_IBURST, CACHE_DBURST,
+    CACHE_CBACK, CACHE_SUPER_SCALAR, CACHE_SETTING_COUNT
+} CacheSetting;
+BOOL cache_setting_enabled(CacheSetting setting);
+void toggle_cache_setting(CacheSetting setting);
+
 /* Toggle cache settings */
 void toggle_icache(void);
 void toggle_dcache(void);

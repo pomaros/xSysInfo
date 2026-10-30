@@ -5,7 +5,6 @@ Type:         util/moni
 Version:      [VERSION]
 Requires:     identify.library
 Architecture: m68k-amigaos
-Distribution: Freely Distributable
 
 xSysInfo is an Open Source system information program for 68k-based classic
 Amigas, and is an homage to the (in)famous and ubiquitous SysInfo program.
@@ -39,8 +38,13 @@ without a leading dash.
           text report to Shell output.
   WHICH   Write a column-aligned system report compatible with the
           WhichAmiga 1.3.3 text format to Shell output.
+  FONT=name.size
+          Choose the classic interface font, for example FONT=6pack.8.
+          Defaults to FONT=topaz.8. FONT name.size is also accepted.
   DARK    Use the dark blue palette in the graphical interface.
           The default is the gray palette.
+  MUI     Use the MUI interface if MUI 3.8 or newer is installed;
+          otherwise the regular graphical interface opens.
   DEBUG   Enable diagnostic output. Debugging is off by default.
   SCSI    Check the A3000 WD SCSI controller at startup. Disabled by
           default; see below before enabling it.
@@ -82,8 +86,8 @@ one WD33C93 check at startup. It resets the controller, identifies
 WD33C93/A/B-compatible chips, reads microcode where supported, and
 measures the input clock. Stop all disk activity before launching with
 SCSI enabled. Normal Shell and Workbench launches leave the check
-disabled. When enabled, it has no confirmation prompt. AmigaOS 2.0 or
-later is required for its timer.
+disabled. When enabled, it has no confirmation prompt. On Kickstart 1.3,
+the check uses an available CIA interval timer.
 
 The bootable floppy image enables it with xSysInfo SCSI in its
 Startup-Sequence. The check runs before xSysInfo enumerates drives;
@@ -101,12 +105,32 @@ If controller restoration fails, xSysInfo displays an error and exits
 with code 20 without enumerating drives, running further benchmarks or
 writing a report. Reboot before accessing disks in that case.
 
+Board details:
+Use Details on the Boards page to inspect individual boards. Zorro
+boards include AutoConfig memory, diagnostic ROM, and configuration
+flags; PCI boards show their device class. The classic interface has
+Prev/Next navigation and Back returns to the list. In MUI, select a
+board and click Details, or double-click its row.
+
+MUI interface:
+With the MUI option or the DISPLAY=mui ToolType, xSysInfo shows the
+same information in a resizable MUI window with register pages for
+Software, Hardware, Speed, Memory, Drives, and Boards. Hardware has
+Overview, CPU, Chipset, SCSI, and Clock tabs. The Clock page shows the
+battery-backed clock live.
+CPU caches are switched with checkmarks, SCSI devices open in their
+own window, and Project/Save report asks for a file name.
+MUI libraries must be installed separately. The floppy and LHA use the
+same executable, with MUI support included by default. Build without MUI
+support using make MUI=0. The floppy packs xSysInfo and its libraries with
+ZX0 to save space; the LHA contains the original, unpacked files.
+
 Workbench icon ToolTypes:
 These settings come from the program's icon when xSysInfo starts from
 Workbench. Edit the icon's ToolTypes, with one entry per line.
 The supplied icon contains DISPLAY=auto, plus disabled examples
 (DISPLAY=window), (DISPLAY=screen), (DISPLAY=pal), (DISPLAY=ntsc),
-(DARK), (DEBUG), and (SCSI).
+(DISPLAY=mui), (FONT=topaz.8), (DARK), (DEBUG), and (SCSI).
 
   ToolType        Description
   --------------  ------------------------------------------------------
@@ -117,6 +141,11 @@ The supplied icon contains DISPLAY=auto, plus disabled examples
   DISPLAY=screen  Open a separate screen with system defaults.
   DISPLAY=pal     Open a separate PAL HIRES screen (640 x 256).
   DISPLAY=ntsc    Open a separate NTSC HIRES screen (640 x 200).
+  DISPLAY=mui     Use the MUI interface. Falls back to DISPLAY=auto
+                  when MUI is not installed.
+  FONT=topaz.8    Font for the classic interface, in name.size form.
+                  For example, FONT=6pack.8 loads FONTS:6pack.font at
+                  size 8. Applies to both window and screen modes.
   DARK            Use the dark blue palette. Omit this entry to use the
                   default gray palette.
   DEBUG           Enable diagnostic output. Omit this entry to leave
@@ -127,6 +156,13 @@ The supplied icon contains DISPLAY=auto, plus disabled examples
 Keep exactly one DISPLAY entry enabled to select the display mode; put
 parentheses around the other choices. Remove the parentheses from (DARK),
 (DEBUG), or (SCSI) to enable an option, and restore them to disable it.
+
+Fonts must fit the existing layout: at most 8 pixels tall, with glyphs
+and character advances fitting an 8-pixel-wide cell. Proportional fonts
+are checked character by character, including the fallback glyph. Missing,
+invalid or oversized fonts produce a message and fall back to Topaz 8.
+Disk fonts require diskfont.library; the default ROM font does not.
+MUI continues to use its own font preferences.
 
 AUTO and SCREEN respect AmigaOS Mode Promotion. PAL and NTSC explicitly
 select native timing on AmigaOS 2.0 or later. On Kickstart 1.3, they

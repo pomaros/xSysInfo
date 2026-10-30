@@ -14,14 +14,17 @@
 #include <exec/devices.h>
 #include <exec/resident.h>
 #include <exec/semaphores.h>
+#include <dos/dosextens.h>
 #include <libraries/identify.h>
 
 #include <proto/exec.h>
+#include <proto/dos.h>
 #include <proto/mmu.h>
 #include <proto/identify.h>
 
 #include "xsysinfo.h"
 #include "software.h"
+#include "growlist.h"
 #include "hardware.h"
 #include "locale_str.h"
 #include "debug.h"
@@ -31,6 +34,28 @@ SoftwareList libraries_list;
 SoftwareList devices_list;
 SoftwareList resources_list;
 SoftwareList mmu_list;
+
+/* Room for extra entries beyond count, within the fixed entry limit. */
+static BOOL reserve_software(SoftwareList *list, ULONG extra)
+{
+    return grow_list((APTR *)&list->entries, &list->capacity, list->count,
+                     list->count + extra, sizeof(SoftwareEntry),
+                     MAX_SOFTWARE_ENTRIES);
+}
+
+static void reset_software_list(SoftwareList *list)
+{
+    free_list((APTR *)&list->entries, &list->capacity, sizeof(SoftwareEntry));
+    list->count = 0;
+}
+
+void free_software_lists(void)
+{
+    reset_software_list(&libraries_list);
+    reset_software_list(&devices_list);
+    reset_software_list(&resources_list);
+    reset_software_list(&mmu_list);
+}
 SystemSoftwareInfo system_software;
 
 /* External references */
@@ -137,7 +162,7 @@ void enumerate_libraries(void)
     ULONG i;
     SoftwareEntry *entry;
 
-    memset(&libraries_list, 0, sizeof(libraries_list));
+    reset_software_list(&libraries_list);
 
     Forbid();
 
@@ -160,7 +185,7 @@ void enumerate_libraries(void)
             }
         }
 
-        if (libraries_list.count >= MAX_SOFTWARE_ENTRIES)
+        if (!reserve_software(&libraries_list, 1))
             continue;
 
         entry = &libraries_list.entries[libraries_list.count];
@@ -183,7 +208,7 @@ void enumerate_libraries(void)
 
     /* Insert artificial "kickstart" entry at the beginning */
     /* Insert artificial "kickstart (soft)" entry at the beginning */
-    if ((libraries_list.count+1) < MAX_SOFTWARE_ENTRIES) {
+    if (reserve_software(&libraries_list, 2)) {
         if ((hw_info.kickstart_version != hw_info.kickstart_patch_version ||
              hw_info.kickstart_revision != hw_info.kickstart_patch_revision) &&
             0 != hw_info.kickstart_patch_version &&
@@ -234,7 +259,7 @@ void enumerate_devices(void)
 {
     struct Node *node;
 
-    memset(&devices_list, 0, sizeof(devices_list));
+    reset_software_list(&devices_list);
 
     Forbid();
 
@@ -242,7 +267,7 @@ void enumerate_devices(void)
          node = node->ln_Succ) {
         struct Device *dev = (struct Device *)node;
 
-        if (devices_list.count >= MAX_SOFTWARE_ENTRIES) break;
+        if (!reserve_software(&devices_list, 1)) break;
 
         SoftwareEntry *entry = &devices_list.entries[devices_list.count];
 
@@ -304,7 +329,7 @@ void enumerate_resources(void)
 {
     struct Node *node;
 
-    memset(&resources_list, 0, sizeof(resources_list));
+    reset_software_list(&resources_list);
 
     Forbid();
 
@@ -312,7 +337,7 @@ void enumerate_resources(void)
          node = node->ln_Succ) {
         struct Library *res = (struct Library *)node;
 
-        if (resources_list.count >= MAX_SOFTWARE_ENTRIES) break;
+        if (!reserve_software(&resources_list, 1)) break;
 
         SoftwareEntry *entry = &resources_list.entries[resources_list.count];
 
@@ -355,31 +380,57 @@ void enumerate_resources(void)
     sort_software_list(&resources_list);
 }
 
+const char *software_entry_text(const SoftwareEntry *entry, char *buffer,
+                                size_t size)
+{
+    LocaleStringID id;
+
+    if (!entry->text_id)
+        return entry->name;
+    id = (LocaleStringID)(entry->text_id - 1);
+    if (id == MSG_MMU_SIZE)
+        snprintf(buffer, size, "%s: %lukB.", get_string(id),
+                 (unsigned long)entry->text_arg);
+    else
+        snprintf(buffer, size, "%s", get_string(id));
+    return buffer;
+}
+
+/* Append a catalog line to the MMU list; the caller reserved room. */
+static void add_mmu_text(LocaleStringID id, ULONG arg)
+{
+    SoftwareEntry *entry = &mmu_list.entries[mmu_list.count++];
+    const char *text;
+
+    entry->text_id = (UWORD)(id + 1);
+    entry->text_arg = arg;
+    text = software_entry_text(entry, entry->name, sizeof(entry->name));
+    if (text != entry->name)
+        copy_string(entry->name, text, sizeof(entry->name));
+}
+
 void enumerate_mmu_entries(void)
 {
     struct MinList *list;
     struct MappingNode *mn;
     SoftwareEntry *entry;
     char buffer[128];
-    memset(&mmu_list, 0, sizeof(mmu_list));
+    reset_software_list(&mmu_list);
 
     Forbid();
 
     //is mmu.library loaded?
-    if (mmuLoaded && hw_info.mmu_enabled) {
+    if (mmuLoaded && hw_info.mmu_present) {
         //no else: iff mmu.library is in the libraries list, it can load!
         if (DOSBase && DOSBase->dl_lib.lib_Version >= 37) {
             if ((MMUBase = open_mmu_library())) {
 
-                entry = &mmu_list.entries[mmu_list.count];
-                snprintf(entry->name, sizeof(entry->name), "%s: %lukB.",
-                         get_string(MSG_MMU_SIZE),
-                         (unsigned long)(GetPageSize(NULL) / 1024));
-                mmu_list.count++;
+                if (reserve_software(&mmu_list, 1))
+                    add_mmu_text(MSG_MMU_SIZE, GetPageSize(NULL) / 1024);
                 /* Get the mapping of the default context */
                 list = GetMapping(NULL);
                 for (mn = list ? (struct MappingNode *)(list->mlh_Head) : NULL;
-                     mn && mn->map_succ && mmu_list.count < 256;
+                     mn && mn->map_succ && reserve_software(&mmu_list, 1);
                      mn = mn->map_succ)
                 {
                     size_t pos;
@@ -523,45 +574,23 @@ void enumerate_mmu_entries(void)
                     ReleaseMapping(NULL, list);
                 }
                 /* Append hint entries at end of list */
-                if (mmu_list.count < 256 - 8) {
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_ADDRESS_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS1_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS2_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS3_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS4_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS5_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS6_HINT));
-                    mmu_list.count++;
-                    entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s",
-                             get_string(MSG_MMU_FLAGS7_HINT));
-                    mmu_list.count++;
+                if (reserve_software(&mmu_list, 8)) {
+                    static const LocaleStringID hints[] = {
+                        MSG_MMU_ADDRESS_HINT, MSG_MMU_FLAGS1_HINT,
+                        MSG_MMU_FLAGS2_HINT, MSG_MMU_FLAGS3_HINT,
+                        MSG_MMU_FLAGS4_HINT, MSG_MMU_FLAGS5_HINT,
+                        MSG_MMU_FLAGS6_HINT, MSG_MMU_FLAGS7_HINT
+                    };
+                    ULONG h;
+
+                    for (h = 0; h < sizeof(hints) / sizeof(hints[0]); h++)
+                        add_mmu_text(hints[h], 0);
                 }
 
                 CloseLibrary((struct Library *)MMUBase);
             }
         }
-    } else {
+    } else if (reserve_software(&mmu_list, 1)) {
         entry = &mmu_list.entries[0];
         copy_string(entry->name, "mmu.library not loaded",
                     sizeof(entry->name));
@@ -570,30 +599,537 @@ void enumerate_mmu_entries(void)
     Permit();
 }
 
+/* What PrismD publishes behind its "prism" semaphore (PrismRTG's prism.h,
+ * interface version 7). Only the fields up to release are read; the
+ * layout must stay in step with upstream. */
+struct PrismSemView {
+    struct SignalSemaphore ss;
+    UWORD version;
+    const char *boardName;
+    struct Task *task;
+    ULONG numModes;
+    APTR screenInfo;
+    APTR testBegin;
+    APTR testEnd;
+    APTR drawLock;
+    APTR logLevel;
+    const ULONG *boardFlags;
+    ULONG hwOps;
+    UBYTE numBoards;
+    const char *board2Name;
+    const ULONG *board2Flags;
+    ULONG board2HwOps;
+    ULONG vramKB[2];
+    APTR testBeginOn;
+    ULONG boardAddr[2];
+    UBYTE boardsSwapped;
+    const char *release;       /* version 7: "1.1b6" */
+    const char *releaseDate;
+};
+#define PRISM_SEM_RELEASE_VERSION 7
+
+static void append_text(char *buffer, size_t size, const char *text)
+{
+    size_t used = strlen(buffer);
+
+    if (used + 1 < size)
+        strncat(buffer, text, size - used - 1);
+}
+
+/* PrismRTG brings its own cybergraphics.library and Picasso96API.library,
+ * which identify.library reports as CyberGraphX or Picasso96. Its daemon
+ * PrismD publishes the "prism" semaphore while it runs; from interface
+ * version 7 that carries the release and the board name. Earlier
+ * PrismDs are named without a release. */
+/* PrismRTG's release and board from its semaphore (interface version 7
+ * on). Copied under Forbid, since PrismD can quit. */
+static void prismrtg_version(char *text, size_t size)
+{
+    struct PrismSemView *sem;
+    char release[16] = "", board[32] = "";
+
+    Forbid();
+    sem = (struct PrismSemView *)FindSemaphore((CONST_STRPTR)"prism");
+    if (sem && sem->version >= PRISM_SEM_RELEASE_VERSION) {
+        if (sem->release)
+            copy_string(release, sem->release, sizeof(release));
+        if (sem->boardName)
+            copy_string(board, sem->boardName, sizeof(board));
+    }
+    Permit();
+
+    if (release[0]) {
+        append_text(text, size, " ");
+        append_text(text, size, release);
+    }
+    /* The board only when the whole name fits; it has its own view. */
+    if (release[0] && board[0] &&
+        strlen(text) + strlen(board) + 3 < size) {
+        append_text(text, size, " (");
+        append_text(text, size, board);
+        append_text(text, size, ")");
+    }
+}
+
+/* The Picasso96 installer records the release ("3.6.3") as the first line
+ * of Picasso96/Version, which boot copies from ENVARC: to ENV:. Neither
+ * may exist, so DOS requesters are off while looking. */
+static BOOL picasso96_release(char *release, size_t size)
+{
+    static const char *const paths[] = {
+        "ENV:Picasso96/Version", "Picasso96:Version"
+    };
+    struct Process *proc = (struct Process *)FindTask(NULL);
+    APTR old_window = proc->pr_WindowPtr;
+    char line[16];
+    ULONG i, n;
+    BPTR fh;
+
+    release[0] = '\0';
+    proc->pr_WindowPtr = (APTR)-1;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]) && !release[0]; i++) {
+        fh = Open((CONST_STRPTR)paths[i], MODE_OLDFILE);
+        if (!fh)
+            continue;
+        n = Read(fh, line, sizeof(line) - 1);
+        Close(fh);
+        if ((LONG)n <= 0)
+            continue;
+        line[n] = '\0';
+        /* Keep the leading "3.6.3"; anything else is not a release. */
+        for (n = 0; line[n] && strchr("0123456789.", line[n]); n++) {}
+        line[n] = '\0';
+        if (n && line[0] != '.')
+            copy_string(release, line, size);
+    }
+    proc->pr_WindowPtr = old_window;
+    return release[0] != '\0';
+}
+
+/* Version of a loaded library, for systems without a release number. */
+static BOOL library_version(const char *name, UWORD *version, UWORD *revision)
+{
+    struct Library *lib;
+
+    Forbid();
+    lib = (struct Library *)FindName(&SysBase->LibList, (CONST_STRPTR)name);
+    if (lib) {
+        *version = lib->lib_Version;
+        *revision = lib->lib_Revision;
+    }
+    Permit();
+    return lib != NULL;
+}
+
+static void append_library_version(char *text, size_t size,
+                                   const char *library, const char *label)
+{
+    UWORD version, revision;
+    char buffer[32];
+
+    if (!library_version(library, &version, &revision))
+        return;
+    snprintf(buffer, sizeof(buffer), " (%s %u.%u)", label, version, revision);
+    if (strlen(text) + strlen(buffer) < size)
+        append_text(text, size, buffer);
+}
+
+/*
+ * identify.library names the graphics system; the version comes from the
+ * system itself. PrismRTG and Picasso96 have release numbers; CyberGraphX
+ * only has its library versions, which are shown as such.
+ */
 static void detect_graphics_system(void)
 {
+    char *text = system_software.graphics_system;
+    size_t size = sizeof(system_software.graphics_system);
+    char release[16];
     const char *name;
 
     system_software.graphics_system_id = IdentifyBase ?
         IdHardwareNumTags(IDHW_GFXSYS, TAG_DONE) : IDGOS_AMIGAOS;
+
     switch (system_software.graphics_system_id) {
     case IDGOS_EGS:       name = "EGS"; break;
     case IDGOS_RETINA:    name = "Retina"; break;
     case IDGOS_GRAFFITI:  name = "Graffiti"; break;
     case IDGOS_TIGA:      name = "TIGA"; break;
     case IDGOS_PROBENCH:  name = "ProBench"; break;
-    case IDGOS_PICASSO:
+    case IDGOS_PICASSO:   name = "Picasso"; break;
     case IDGOS_PICASSO96: name = "Picasso96"; break;
     case IDGOS_CGX:       name = "CyberGraphX V2"; break;
     case IDGOS_CGX3:      name = "CyberGraphX V3"; break;
     case IDGOS_CGX4:      name = "CyberGraphX V4"; break;
+    case IDGOS_PRISMRTG:  name = "PrismRTG"; break;
     default:
         system_software.graphics_system_id = IDGOS_AMIGAOS;
-        name = get_string(MSG_NATIVE_GRAPHICS);
+        name = get_builtin_string(MSG_NATIVE_GRAPHICS);
         break;
     }
-    copy_string(system_software.graphics_system, name,
-                sizeof(system_software.graphics_system));
+    copy_string(text, name, size);
+
+    switch (system_software.graphics_system_id) {
+    case IDGOS_PRISMRTG:
+        prismrtg_version(text, size);
+        break;
+    case IDGOS_PICASSO96:
+        if (picasso96_release(release, sizeof(release))) {
+            append_text(text, size, " ");
+            append_text(text, size, release);
+        } else {
+            append_library_version(text, size, "rtg.library", "rtg");
+        }
+        break;
+    case IDGOS_CGX3:
+    case IDGOS_CGX4:
+        append_library_version(text, size, "cgxsystem.library", "cgx");
+        break;
+    case IDGOS_CGX:
+        append_library_version(text, size, "cybergraphics.library", "cgx");
+        break;
+    default:
+        break;
+    }
+}
+
+/* Copy the version that follows prefix in id, such as "1.15" after
+ * "Roadshow ", into text after the product name. */
+static BOOL append_release(char *text, size_t size, const char *id,
+                           const char *prefix)
+{
+    const char *p = strstr(id, prefix);
+    char release[16];
+    size_t n = 0;
+
+    if (!p)
+        return FALSE;
+    p += strlen(prefix);
+    while (n < sizeof(release) - 1 &&
+           ((p[n] >= '0' && p[n] <= '9') || p[n] == '.'))
+        n++;
+    if (!n || p[0] == '.')
+        return FALSE;
+    memcpy(release, p, n);
+    release[n] = '\0';
+    append_text(text, size, " ");
+    append_text(text, size, release);
+    return TRUE;
+}
+
+/* A floppy's handler serves DF0: to DF3:. */
+static BOOL is_floppy_handler(struct MsgPort *port)
+{
+    static const char *const names[] = { "DF0", "DF1", "DF2", "DF3" };
+    struct DosList *dl;
+    BOOL floppy = FALSE;
+    ULONG i;
+
+    dl = LockDosList(LDF_DEVICES | LDF_READ);
+    for (i = 0; i < sizeof(names) / sizeof(names[0]) && !floppy; i++) {
+        struct DosList *entry = FindDosEntry(dl, (CONST_STRPTR)names[i],
+                                             LDF_DEVICES);
+        floppy = entry && entry->dol_Task == port;
+    }
+    UnLockDosList(LDF_DEVICES | LDF_READ);
+    return floppy;
+}
+
+/* Nobody runs a network stack from the floppy that boots xSysInfo, and
+ * reading LIBS: there would only cost time. */
+static BOOL libs_beyond_floppies(void)
+{
+    struct DevProc *dvp = NULL;
+    BOOL found = FALSE;
+
+    while (!found &&
+           (dvp = GetDeviceProc((CONST_STRPTR)"LIBS:", dvp)) != NULL)
+        found = !is_floppy_handler(dvp->dvp_Port);
+    if (dvp)
+        FreeDeviceProc(dvp);
+    return found;
+}
+
+/* TheWire13's library ID starts with this and goes on with the version of
+ * its bsdsocket.library, which TheWire13 releases number separately. */
+#define THEWIRE_ID "TheWire13 bsdsocket.library "
+
+static void thewire_name(char *text, size_t size, const char *id)
+{
+    copy_string(text, "TheWire13 (bsdsocket", size);
+    if (append_release(text, size, id, "bsdsocket.library "))
+        append_text(text, size, ")");
+    else
+        copy_string(text, "TheWire13", size);
+}
+
+/* Roadshow and TheWire13 keep bsdsocket.library in LIBS: and start when it
+ * is first opened. Read the file instead of opening it, which would start
+ * the stack. Other stacks create the library in memory when they start. */
+static BOOL installed_stack(char *text, size_t size)
+{
+    /* Room for one read after a string carried over from the last one. */
+    enum { CHUNK = 4096, BUFFER = 2 * CHUNK + 1 };
+    struct Process *proc = (struct Process *)FindTask(NULL);
+    APTR old_window = proc->pr_WindowPtr;
+    char *buffer;
+    LONG kept = 0, n;
+    BOOL found = FALSE;
+    BPTR fh = 0;
+
+    text[0] = '\0';
+    if (DOSBase->dl_lib.lib_Version < 36)
+        return FALSE;
+    buffer = AllocMem(BUFFER, MEMF_ANY);
+    if (!buffer)
+        return FALSE;
+    proc->pr_WindowPtr = (APTR)-1;
+    if (libs_beyond_floppies())
+        fh = Open((CONST_STRPTR)"LIBS:bsdsocket.library", MODE_OLDFILE);
+    while (fh && !found && (n = Read(fh, buffer + kept, CHUNK)) > 0) {
+        char *ver, *end;
+
+        n += kept;
+        buffer[n] = '\0';
+        /* Nul bytes end strstr(); search each string separately, and only
+         * strings that end within the data read so far. */
+        for (ver = buffer; ver < buffer + n; ver = end + 1) {
+            char *tag;
+
+            end = ver + strlen(ver);
+            if (end >= buffer + n)
+                break;
+            tag = strstr(ver, "$VER:");
+            if (tag && strstr(tag, "Roadshow ")) {
+                copy_string(text, "Roadshow", size);
+                found = append_release(text, size, tag, "Roadshow ");
+                if (found)
+                    break;
+            }
+            /* TheWire13 has no $VER; its library ID names the stack. The
+             * library's own version does not tell the release. */
+            if (strstr(ver, THEWIRE_ID)) {
+                copy_string(text, "TheWire13", size);
+                found = TRUE;
+                break;
+            }
+        }
+        /* Carry the string that goes on in the next read over from its
+         * start. A run longer than a read is no string; keep its end. */
+        kept = buffer + n - ver;
+        if (kept > CHUNK)
+            kept = CHUNK;
+        memmove(buffer, buffer + n - kept, kept);
+    }
+    if (fh)
+        Close(fh);
+    proc->pr_WindowPtr = old_window;
+    FreeMem(buffer, BUFFER);
+    if (!found)
+        text[0] = '\0';
+    return found;
+}
+
+/* Whether start to end lies within one of Exec's memory regions, as every
+ * allocation does. Call it in Forbid(). */
+static BOOL within_ram(const UBYTE *start, const UBYTE *end)
+{
+    struct MemHeader *mh;
+
+    for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
+         (struct Node *)mh != (struct Node *)&SysBase->MemList.lh_Tail;
+         mh = (struct MemHeader *)mh->mh_Node.ln_Succ) {
+        /* mh_Upper is exclusive. */
+        if (start >= (const UBYTE *)mh->mh_Lower &&
+            end <= (const UBYTE *)mh->mh_Upper)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* LoadSeg() puts the allocation size in front of a segment's link, which
+ * BADDR(seg) points to; the hunk data follows the link. Only segments
+ * that lie in RAM are read, so a stray segment list cannot lead into
+ * ROM or unmapped space. */
+static BOOL segment_bounds(BPTR seg, const UBYTE **start, const UBYTE **end)
+{
+    const UBYTE *link = (const UBYTE *)BADDR(seg);
+    ULONG size;
+
+    if (!seg || !within_ram(link - 4, link + 4))
+        return FALSE;
+    size = ((const ULONG *)link)[-1];
+    if (size < 8 || size > 0x1000000 || !within_ram(link - 4, link - 4 + size))
+        return FALSE;
+    *start = link + 4;
+    *end = link - 4 + size;
+    return TRUE;
+}
+
+/* The program a process runs: the command of a CLI, or the segment list
+ * that Workbench or CreateNewProc() started the process with, which DOS
+ * keeps in the fourth entry of pr_SegList. The first entry is not a
+ * count to check against; it is 2 for most processes on OS 3.2. */
+static BPTR process_program(struct Task *task)
+{
+    struct Process *proc = (struct Process *)task;
+    BPTR *segs;
+
+    if (task->tc_Node.ln_Type != NT_PROCESS)
+        return 0;
+    if (proc->pr_CLI) {
+        struct CommandLineInterface *cli = BADDR(proc->pr_CLI);
+
+        if (cli->cli_Module)
+            return cli->cli_Module;
+    }
+    segs = BADDR(proc->pr_SegList);
+    return segs ? segs[3] : 0;
+}
+
+/* The program whose segments hold addr, among the processes that wait or
+ * are ready. Exec moves tasks between these lists from interrupts, so
+ * they are only copied with interrupts off; Forbid() keeps the programs
+ * loaded while their segments are compared. */
+static BPTR program_holding(const void *addr)
+{
+    enum { MAX_PROGRAMS = 128 };
+    struct List *lists[] = { &SysBase->TaskReady, &SysBase->TaskWait };
+    BPTR programs[MAX_PROGRAMS];
+    ULONG count = 0, i, n;
+
+    Disable();
+    for (i = 0; i < sizeof(lists) / sizeof(lists[0]); i++) {
+        struct Node *node;
+
+        for (node = lists[i]->lh_Head;
+             node->ln_Succ && count < MAX_PROGRAMS; node = node->ln_Succ) {
+            BPTR program = process_program((struct Task *)node);
+
+            if (program)
+                programs[count++] = program;
+        }
+    }
+    Enable();
+
+    for (i = 0; i < count; i++) {
+        const UBYTE *start, *end;
+        BPTR seg = programs[i];
+
+        for (n = 0; n < 64 && segment_bounds(seg, &start, &end); n++) {
+            if ((const UBYTE *)addr >= start && (const UBYTE *)addr < end)
+                return programs[i];
+            seg = *(BPTR *)BADDR(seg);
+        }
+    }
+    return 0;
+}
+
+/* The release in the $VER of the program whose segments hold addr, such
+ * as "3.2b" from "$VER: Miami 3.2b (09.11.98)". Call it in Forbid(), so
+ * the program cannot quit and unload while its segments are read. */
+static BOOL program_release(const void *addr, char *release, size_t size)
+{
+    BPTR seg = program_holding(addr);
+    const UBYTE *p, *end;
+    ULONG n;
+
+    for (n = 0; n < 64 && segment_bounds(seg, &p, &end);
+         n++, seg = *(BPTR *)BADDR(seg)) {
+        for (; p + 5 < end; p++) {
+            size_t len = 0;
+
+            if (p[0] != '$' || memcmp(p, "$VER:", 5))
+                continue;
+            /* Skip the program name to the release. */
+            for (p += 5; p < end && *p == ' '; p++) {}
+            for (; p < end && *p > ' '; p++) {}
+            for (; p < end && *p == ' '; p++) {}
+            if (p >= end || *p < '0' || *p > '9')
+                continue;
+            while (len < size - 1 && p + len < end && p[len] > ' ' &&
+                   p[len] != '(')
+                len++;
+            memcpy(release, p, len);
+            release[len] = '\0';
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/*
+ * Name the running TCP/IP stack from what it left in the library list.
+ * Opening bsdsocket.library is avoided: it would start Roadshow, and
+ * Miami can go online when an application opens it.
+ */
+static void detect_network_stack(void)
+{
+    char *text = system_software.network_stack;
+    size_t size = sizeof(system_software.network_stack);
+    struct Library *lib;
+    UWORD version = 0, revision = 0, miami_version = 0, miami_revision = 0;
+    BOOL found, miami, genesis;
+    char id[96] = "", miami_release[16] = "";
+
+    Forbid();
+    lib = (struct Library *)FindName(&SysBase->LibList,
+                                     (CONST_STRPTR)"bsdsocket.library");
+    found = lib != NULL;
+    if (lib) {
+        version = lib->lib_Version;
+        revision = lib->lib_Revision;
+        if (lib->lib_IdString)
+            copy_string(id, (const char *)lib->lib_IdString, sizeof(id));
+    }
+    /* Miami and MiamiDx create miami.library themselves; MiamiDx starts
+     * at version 21, Miami 3.2b is version 15. Its ID string lies in the
+     * program, whose $VER has the release. */
+    lib = (struct Library *)FindName(&SysBase->LibList,
+                                     (CONST_STRPTR)"miami.library");
+    miami = lib != NULL;
+    if (lib) {
+        miami_version = lib->lib_Version;
+        miami_revision = lib->lib_Revision;
+        if (lib->lib_IdString)
+            program_release(lib->lib_IdString, miami_release,
+                            sizeof(miami_release));
+    }
+    /* Genesis runs an AmiTCP kernel; its program loads genesis.library. */
+    genesis = FindName(&SysBase->LibList,
+                       (CONST_STRPTR)"genesis.library") != NULL;
+    Permit();
+
+    text[0] = '\0';
+    system_software.network_not_running = FALSE;
+    if (!found) {
+        system_software.network_not_running = installed_stack(text, size);
+    } else if (!strncmp(id, "UAE ", 4)) {
+        snprintf(text, size, "UAE bsdsocket %u.%u", version, revision);
+    } else if (!strncmp(id, "TheWire13", 9)) {
+        thewire_name(text, size, id);
+    } else if (strstr(id, "Roadshow")) {
+        copy_string(text, "Roadshow", size);
+        append_release(text, size, id, "Roadshow ");
+    } else if (miami) {
+        const char *name = miami_version >= 21 ? "MiamiDx" : "Miami";
+
+        if (miami_release[0])
+            snprintf(text, size, "%s %s", name, miami_release);
+        else
+            snprintf(text, size, "%s (miami %u.%u)", name,
+                     miami_version, miami_revision);
+    } else if (genesis) {
+        snprintf(text, size, "Genesis (AmiTCP %u.%u)", version, revision);
+    } else if (strstr(id, "AmiTCP")) {
+        copy_string(text, "AmiTCP", size);
+        append_release(text, size, id, "release ");
+        snprintf(text + strlen(text), size - strlen(text),
+                 " (bsdsocket %u.%u)", version, revision);
+    } else {
+        snprintf(text, size, "bsdsocket %u.%u", version, revision);
+    }
+    debug("  software: network stack '%s', bsdsocket id '%s'\n",
+          (ULONG)text, (ULONG)id);
 }
 
 void detect_system_software(void)
@@ -662,6 +1198,7 @@ void detect_system_software(void)
           (ULONG)setpatch, (ULONG)system_software.setpatch_version,
           (ULONG)system_software.setpatch_revision);
     detect_graphics_system();
+    detect_network_stack();
 }
 
 /*

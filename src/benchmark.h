@@ -41,7 +41,7 @@ typedef struct {
 #define FLOPS_BASE_LOOPS 50000
 #define MIN_FLOP_MEASURE 4000
 #define FLOP_LOOP_INSTRUCTIONS 8
-#define FLOP_INIT_INSTRUCTIONS 3
+#define FLOP_INIT_INSTRUCTIONS 4
 
 /* Benchmark results */
 typedef struct {
@@ -74,8 +74,6 @@ ULONG run_dhrystone(void);
 ULONG run_mflops_benchmark(void);
 void run_memory_speed_tests(void);
 ULONG measure_mem_read_speed(volatile ULONG *src, ULONG buffer_size, ULONG iterations);
-ULONG get_mhz_cpu(void);
-ULONG get_mhz_fpu(void);
 
 /* Helper functions */
 ULONG calculate_mips(ULONG dhrystones);

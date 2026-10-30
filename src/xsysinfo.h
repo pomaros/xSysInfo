@@ -41,12 +41,6 @@ static inline void copy_string(char *dest, const char *src, size_t destsize)
     *dest = '\0';
 }
 
-/* Default font settings */
-#define DEFAULT_FONT_NAME   "topaz.font"
-#define DEFAULT_FONT_HEIGHT 8
-
-extern struct TextAttr Topaz8Font;
-
 /* Program name */
 #define XSYSINFO_NAME       "xSysInfo"
 /* Version information is coming from Makefile */
@@ -92,7 +86,9 @@ typedef enum {
     VIEW_MEMORY,
     VIEW_DRIVES,
     VIEW_BOARDS,
-    VIEW_SCSI
+    VIEW_BOARD_DETAILS,
+    VIEW_SCSI,
+    VIEW_REPORT
 } ViewMode;
 
 /* Software pages */
@@ -110,6 +106,7 @@ typedef enum {
     HARDWARE_STD,
     HARDWARE_CPU,
     HARDWARE_EXT,
+    HARDWARE_SCSI,
     HARDWARE_CLOCK,
     HARDWARE_COUNT
 } HardwareType;
@@ -121,7 +118,7 @@ typedef enum {
     LOC_32BIT_RAM,
     LOC_24BIT_RAM,
     LOC_CHIP_RAM,
-    LOC_KICKSTART       /* Special: shows ROM size (256K/512K) */
+    LOC_KICKSTART       /* Special: shows total mapped ROM size in KiB */
 } MemoryLocation;
 
 /* Bar graph scale modes */
@@ -190,6 +187,7 @@ typedef struct {
     LONG drive_count;               /* Total drives */
 
     /* Boards view state */
+    LONG selected_board;            /* Board shown in the details view */
     LONG board_scroll;              /* Scroll offset */
     LONG board_count;               /* Total boards */
     BoardDisplay board_display;     /* Names, decimal IDs, or hexadecimal IDs */

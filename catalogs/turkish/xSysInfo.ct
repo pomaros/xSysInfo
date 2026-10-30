@@ -171,93 +171,93 @@ Sen
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-BASLANGIC ADRESI
+Baslangic adresi
 ;
 MSG_END_ADDRESS
-BITIS ADRESI
+Bitis adresi
 ;
 MSG_TOTAL_SIZE
-TOPLAM BOYUT
+Toplam boyut
 ;
 MSG_MEMORY_TYPE
-BELLEK TURU
+Bellek turu
 ;
 MSG_PRIORITY
-ONCELIK
+Oncelik
 ;
 MSG_LOWER_BOUND
-ALT SINIR
+Alt sinir
 ;
 MSG_UPPER_BOUND
-UST SINIR
+Ust sinir
 ;
 MSG_FIRST_ADDRESS
-ILK ADRES
+Ilk adres
 ;
 MSG_AMOUNT_FREE
-BOS MIKTAR
+Bos miktar
 ;
 MSG_LARGEST_BLOCK
-EN BUYUK BLOK
+En buyuk blok
 ;
 MSG_NUM_CHUNKS
-PARCA SAYISI
+Parca sayisi
 ;
 MSG_NODE_NAME
-DUGUM ADI
+Dugum adi
 ;
 MSG_MEMORY_SPEED
-BELLEK HIZI
+Bellek hizi
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-DISK HATA SAYISI
+Disk hata sayisi
 ;
 MSG_UNIT_NUMBER
-BIRIM NUMARASI
+Birim numarasi
 ;
 MSG_DISK_STATE
-DISK DURUMU
+Disk durumu
 ;
 MSG_TOTAL_BLOCKS
-TOPLAM BLOK SAYISI
+Toplam blok sayisi
 ;
 MSG_BLOCKS_USED
-KULLANILAN BLOKLAR
+Kullanilan bloklar
 ;
 MSG_BYTES_PER_BLOCK
-BLOK BASINA BAYT
+Blok basina bayt
 ;
 MSG_DISK_TYPE
-SURUCU/DISK TURU
+Surucu/disk turu
 ;
 MSG_VOLUME_NAME
-BIRIM ADI
+Birim adi
 ;
 MSG_DEVICE_NAME
-AYGIT ADI
+Aygit adi
 ;
 MSG_SURFACES
-YUZEYLER
+Yuzeyler
 ;
 MSG_SECTORS_PER_SIDE
-YUZ BASINA SEKTOR
+Yuz basina sektor
 ;
 MSG_RESERVED_BLOCKS
-AYRILMIS BLOKLAR
+Ayrilmis bloklar
 ;
 MSG_LOWEST_CYLINDER
-EN DUSUK SILINDIR
+En dusuk silindir
 ;
 MSG_HIGHEST_CYLINDER
-EN YUKSEK SILINDIR
+En yuksek silindir
 ;
 MSG_NUM_BUFFERS
-TAMPON SAYISI
+Tampon sayisi
 ;
 MSG_SPEED
-SURUCU HIZI
+Surucu hizi
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Surucu bulunamadi.
@@ -632,9 +632,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Bilinmiyor
 ;
-MSG_EXT_INFO
-A3000/4000 icin ek bilgi
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,163 @@ Eþlik kontr.
 ;
 MSG_NCR_DOUBLER
 Saat katlama
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+Yonga ID
+;
+MSG_PCMCIA_CARD
+PCMCIA kart
+;
+MSG_PCMCIA_SLOT
+PCMCIA yuva
+;
+MSG_PCMCIA_ACCESS
+Eriþim süresi
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+PPC revizyon
+;
+MSG_PPC_BUS
+PPC veri MHz
+;
+MSG_PPC_RUNTIME
+PPC sistemi
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Yazýlým
+;
+MSG_HARDWARE_TITLE
+Donaným
+;
+MSG_CHIPSET_TITLE
+Yonga seti
+;
+MSG_SPEED_TITLE
+Hýz
+;
+MSG_MEMORY_TITLE
+Bellek
+;
+MSG_DRIVES_TITLE
+Sürücüler
+;
+MSG_BOARDS_TITLE
+Kartlar
+;
+MSG_PROJECT_MENU
+Proje
+;
+MSG_ABOUT
+Hakkýnda...
+;
+MSG_ABOUT_MUI
+MUI hakkýnda...
+;
+MSG_RUN_BENCHMARKS
+Performans testlerini çalýþtýr
+;
+MSG_SAVE_REPORT
+Raporu kaydet...
+;
+MSG_QUIT
+Çýkýþ
+;
+MSG_SETTINGS_MENU
+Ayarlar
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Hýzý ölç
+;
+MSG_SCSI_DEVICES
+SCSI aygýtlarý...
+;
+MSG_CLOSE
+Kapat
+;
+MSG_RESULTS_TITLE
+Sonuçlar
+;
+MSG_NAME
+Ad
+;
+MSG_LOCATION
+Konum
+;
+MSG_ADDRESS
+Adres
+;
+MSG_VERSION
+Sürüm
+;
+MSG_SIZE
+Boyut
+;
+MSG_DRIVE
+Sürücü
+;
+MSG_VOLUME
+Birim
+;
+MSG_REPORT_SAVED
+Rapor %s konumuna kaydedildi
+;
+MSG_REPORT_SAVE_FAILED
+Rapor kaydedilemedi
+;
+MSG_FONT_INVALID
+Geçersiz FONT deðeri. Biçim: FONT=ad.boyut.
+;
+MSG_FONT_UNAVAILABLE
+Ýstenen yazý tipi açýlamadý.
+;
+MSG_FONT_TOO_LARGE
+Yazý tipi 8 x 8 piksel sýnýrýný aþýyor.
+;
+MSG_FONT_FALLBACK
+topaz.8 kullanýlýyor.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Rapor...
+;
+MSG_REPORT_TITLE
+Sistem raporu
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Kýsa
+;
+MSG_REPORT_FULL
+Tam
+;
+MSG_REPORT_SAVE_AS
+Farklý kaydet...
+;
+MSG_REPORT_FAILED
+Rapor önizlemesi oluþturulamadý
+;
+MSG_BTN_REPORT
+RAPOR
+;
+MSG_NETWORK
+Að
+;
+MSG_NOT_RUNNING
+çalýþmýyor
 ;

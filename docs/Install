@@ -1,0 +1,150 @@
+; xSysInfo hard-disk installation, using the standard Amiga Installer.
+
+(set @app-name "xSysInfo")
+(welcome
+    "Install xSysInfo [VERSION], its translations, and identify.library.\n\n"
+    "Close xSysInfo before updating an existing installation."
+)
+
+; Novice mode normally suppresses questions, including replacement prompts.
+(if (= @user-level 0) (user 1))
+
+(if (exists "Work:" (noreq))
+    (set @default-dest "Work:xSysInfo")
+    (if (exists "SYS:Utilities")
+        (set @default-dest "SYS:Utilities/xSysInfo")
+        (set @default-dest "SYS:Tools/xSysInfo")
+    )
+)
+
+; Installer reads major/revision from a RomTag ID string or a $VER tag.
+(procedure version-text
+    (if version
+        (cat (/ version 65536) "." (BITAND version 65535))
+        "unknown"
+    )
+)
+
+; Ask even for equal versions: the bundled Identify may include additional
+; fixes without changing its upstream version number.
+(procedure replace-file
+    (
+        (if (<> (exists dest-file) 1)
+            (abort (cat "Expected a file, but found a drawer at:\n" dest-file))
+        )
+        (set version (getversion source-file))
+        (set new-version (version-text))
+        (set version (getversion dest-file))
+        (set old-version (version-text))
+        (askbool
+            (prompt dest-file " already exists.\n\n"
+                "Installed version: " old-version "\n"
+                "Bundled version: " new-version "\n\n"
+                "Replace the installed file?"
+            )
+            (help
+                "Replace installs the bundled file, even if its version is\n"
+                "the same or older. Keep leaves your installed file intact.\n\n"
+                "Versions above show major.revision only. xSysInfo patch\n"
+                "and development suffixes are not reported by Installer.\n"
+                "The bundled xSysInfo build is [VERSION]."
+            )
+            (choices "Replace" "Keep")
+            (default 0)
+        )
+    )
+)
+
+; Check the payload before asking about replacements or copying files.
+(if (<> (exists "xSysInfo") 1)
+    (abort "The package's xSysInfo executable is missing or is a drawer.\n"
+        "Run Install from the extracted xSysInfo package drawer.")
+)
+(if (<> (exists "Libs/identify.library") 1)
+    (abort "The package's Libs/identify.library is missing or is a drawer.\n"
+        "Extract the complete xSysInfo package before installing.")
+)
+
+(set @default-dest
+    (askdir
+        (prompt "Select the xSysInfo installation drawer.\n\n"
+            "For an update, select the drawer containing your existing xSysInfo.")
+        (help "The program and its Catalogs drawer will be installed here.\n"
+            "You can enter a new drawer name on your hard disk.")
+        (default @default-dest)
+        (newpath)
+    )
+)
+
+(if (= (exists @default-dest) 1)
+    (abort (cat "The installation path is a file, not a drawer:\n"
+        @default-dest "\n\nSelect the drawer containing xSysInfo, "
+        "or enter a new drawer name."))
+)
+
+(set source-file "xSysInfo")
+(set dest-file (tackon @default-dest "xSysInfo"))
+(set install-program 1)
+(if (exists dest-file)
+    (
+        (if (= (expandpath source-file) (expandpath dest-file))
+            (abort "Choose an installation drawer different from this package drawer.")
+        )
+        (set install-program (replace-file))
+    )
+)
+
+(set source-file "Libs/identify.library")
+(set dest-file "LIBS:identify.library")
+(set install-identify 1)
+(if (exists dest-file)
+    (set install-identify (replace-file))
+)
+
+(if install-program
+    (
+        (if (NOT (exists (pathonly @default-dest)))
+            (makedir (pathonly @default-dest) (infos))
+        )
+        ; Use the package drawer's own icon, even if the drawer was renamed.
+        (set source-drawer-icon (cat (pathonly (expandpath "xSysInfo")) ".info"))
+        (if (NOT (exists @default-dest))
+            (if (exists source-drawer-icon)
+                (makedir @default-dest)
+                (makedir @default-dest (infos))
+            )
+        )
+        (if (NOT (exists (cat @default-dest ".info")))
+            (if (exists source-drawer-icon)
+                (copyfiles (source source-drawer-icon)
+                    (dest (pathonly @default-dest))
+                    (newname (cat (fileonly @default-dest) ".info")))
+            )
+        )
+        (copyfiles (source "xSysInfo") (dest @default-dest))
+        ; Keep the user's tooltypes and icon position when upgrading.
+        (if (NOT (exists (tackon @default-dest "xSysInfo.info")))
+            (copyfiles (source "xSysInfo.info") (dest @default-dest))
+        )
+        (copyfiles (source "Catalogs")
+            (dest (tackon @default-dest "Catalogs")) (all))
+        (copyfiles (source "") (dest @default-dest)
+            (choices "readme.txt" "LICENSE" "Identify.LICENSE"))
+        ; Preserve a customized reader and icon position on upgrades.
+        (if (NOT (exists (tackon @default-dest "readme.txt.info")))
+            (copyfiles (source "readme.txt.info") (dest @default-dest))
+        )
+    )
+)
+
+(if install-identify
+    (copyfiles (source "Libs/identify.library") (dest "LIBS:"))
+)
+
+(complete 100)
+(if install-identify
+    (exit "Installation complete.\n\n"
+        "Restart your Amiga before running xSysInfo if an older\n"
+        "identify.library is still loaded in memory.")
+    (exit "Installation complete.")
+)

@@ -103,7 +103,7 @@ MSG_DECODING
 Dekodierung
 ;
 MSG_CARD_SLOT
-Kartensteckplatz
+Steckplatz
 ;
 MSG_VERT_HZ
 Vert Hz
@@ -171,93 +171,93 @@ Du
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-STARTADRESSE
+Startadresse
 ;
 MSG_END_ADDRESS
-ENDADRESSE
+Endadresse
 ;
 MSG_TOTAL_SIZE
-GESAMTGRÖSSE
+Gesamtgröße
 ;
 MSG_MEMORY_TYPE
-SPEICHERTYP
+Speichertyp
 ;
 MSG_PRIORITY
-PRIORITÄT
+Priorität
 ;
 MSG_LOWER_BOUND
-UNTERE GRENZE
+Untere Grenze
 ;
 MSG_UPPER_BOUND
-OBERE GRENZE
+Obere Grenze
 ;
 MSG_FIRST_ADDRESS
-ERSTE ADRESSE
+Erste Adresse
 ;
 MSG_AMOUNT_FREE
-FREI VERFÜGBAR
+Frei verfügbar
 ;
 MSG_LARGEST_BLOCK
-GRÖSSTER BLOCK
+Größter Block
 ;
 MSG_NUM_CHUNKS
-ANZAHL BLÖCKE
+Anzahl Blöcke
 ;
 MSG_NODE_NAME
-KNOTENNAME
+Knotenname
 ;
 MSG_MEMORY_SPEED
-SPEICHERGESCHW.
+Speichergeschw.
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-ANZAHL DISKETTENFEHLER
+Anzahl Diskettenfehler
 ;
 MSG_UNIT_NUMBER
-GERÄTENUMMER
+Gerätenummer
 ;
 MSG_DISK_STATE
-DISKETTENSTATUS
+Diskettenstatus
 ;
 MSG_TOTAL_BLOCKS
-GESAMTANZAHL BLÖCKE
+Gesamtanzahl Blöcke
 ;
 MSG_BLOCKS_USED
-BELEGTE BLÖCKE
+Belegte Blöcke
 ;
 MSG_BYTES_PER_BLOCK
-BYTES PRO BLOCK
+Bytes pro Block
 ;
 MSG_DISK_TYPE
-LAUFWERKS-/DISKETTENTYP
+Laufwerks-/Diskettentyp
 ;
 MSG_VOLUME_NAME
-DATENTRÄGERNAME
+Datenträgername
 ;
 MSG_DEVICE_NAME
-GERÄTENAME
+Gerätename
 ;
 MSG_SURFACES
-OBERFLÄCHEN
+Oberflächen
 ;
 MSG_SECTORS_PER_SIDE
-SEKTOREN PRO SEITE
+Sektoren pro Seite
 ;
 MSG_RESERVED_BLOCKS
-RESERVIERTE BLÖCKE
+Reservierte Blöcke
 ;
 MSG_LOWEST_CYLINDER
-NIEDRIGSTER ZYLINDER
+Niedrigster Zylinder
 ;
 MSG_HIGHEST_CYLINDER
-HÖCHSTER ZYLINDER
+Höchster Zylinder
 ;
 MSG_NUM_BUFFERS
-ANZAHL PUFFER
+Anzahl Puffer
 ;
 MSG_SPEED
-LAUFWERKSGESCHW.
+Laufwerksgeschw.
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Keine Laufwerke gefunden.
@@ -632,9 +632,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Unbekannt
 ;
-MSG_EXT_INFO
-Erweiterte Info A3000/4000
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,223 @@ Paritätspr.
 ;
 MSG_NCR_DOUBLER
 Taktverdoppl.
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+Chip-ID
+;
+MSG_PCMCIA_CARD
+PCMCIA-Karte
+;
+MSG_PCMCIA_SLOT
+PCMCIA-Slot
+;
+MSG_PCMCIA_ACCESS
+Zugriffszeit
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+PPC-Revision
+;
+MSG_PPC_BUS
+PPC-Bus MHz
+;
+MSG_PPC_RUNTIME
+PPC-Laufzeit
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Software
+;
+MSG_HARDWARE_TITLE
+Hardware
+;
+MSG_CHIPSET_TITLE
+Chipsatz
+;
+MSG_SPEED_TITLE
+Tempo
+;
+MSG_MEMORY_TITLE
+Speicher
+;
+MSG_DRIVES_TITLE
+Laufwerke
+;
+MSG_BOARDS_TITLE
+Karten
+;
+MSG_PROJECT_MENU
+Projekt
+;
+MSG_ABOUT
+Über...
+;
+MSG_ABOUT_MUI
+Über MUI...
+;
+MSG_RUN_BENCHMARKS
+Benchmarks starten
+;
+MSG_SAVE_REPORT
+Bericht speichern...
+;
+MSG_QUIT
+Beenden
+;
+MSG_SETTINGS_MENU
+Einstellungen
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Tempo messen
+;
+MSG_SCSI_DEVICES
+SCSI-Geräte...
+;
+MSG_CLOSE
+Schließen
+;
+MSG_RESULTS_TITLE
+Ergebnisse
+;
+MSG_NAME
+Name
+;
+MSG_LOCATION
+Ort
+;
+MSG_ADDRESS
+Adresse
+;
+MSG_VERSION
+Version
+;
+MSG_SIZE
+Größe
+;
+MSG_DRIVE
+Laufwerk
+;
+MSG_VOLUME
+Datenträger
+;
+MSG_REPORT_SAVED
+Bericht gespeichert unter %s
+;
+MSG_REPORT_SAVE_FAILED
+Bericht konnte nicht gespeichert werden
+;
+MSG_FONT_INVALID
+Ungültiger FONT-Wert. Format: FONT=Name.Größe.
+;
+MSG_FONT_UNAVAILABLE
+Die gewünschte Schrift konnte nicht geöffnet werden.
+;
+MSG_FONT_TOO_LARGE
+Die Schrift überschreitet die Grenze von 8 x 8 Pixeln.
+;
+MSG_FONT_FALLBACK
+Topaz.8 wird verwendet.
+;
+MSG_BOARD_DETAILS
+Details
+;
+MSG_BOARD_DETAILS_TITLE
+Erweiterungskartendetails
+;
+MSG_BOARD_BACK
+Zurück
+;
+MSG_BOARD_PCI_CLASS
+PCI-Klasse
+;
+MSG_BOARD_SYSTEM_MEMORY
+Systemspeicher
+;
+MSG_BOARD_MEMORY_SPACE
+Speicher-/E/A-Bereich
+;
+MSG_BOARD_ROM_VALID
+ROM-Vektor gültig
+;
+MSG_BOARD_ROM_VECTOR
+ROM-Vektor-Offset
+;
+MSG_BOARD_CHAINED
+Nächste Karte verwandt
+;
+MSG_BOARD_SHUTUP
+Abschaltbar
+;
+MSG_BOARD_ZORRO_III
+Zorro-III-Flag
+;
+MSG_BOARD_EXTENDED
+Erweiterte Größe (Z3)
+;
+MSG_BOARD_SUBSIZE
+Logische Größe (Z3)
+;
+MSG_BOARD_SIZE_MATCHES
+Wie physische Größe
+;
+MSG_BOARD_AUTO_SIZE
+Automatische Größe
+;
+MSG_BOARD_RESERVED
+Reserviert
+;
+MSG_BOARD_MEMORY_DEVICE
+Speicherkarte
+;
+MSG_BOARD_IO_DEVICE
+E/A-Karte
+;
+MSG_BOARD_8MB_SPACE
+8-MB-Erweiterungsbereich
+;
+MSG_BOARD_ANY_SPACE
+Beliebiger Adressbereich
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Bericht...
+;
+MSG_REPORT_TITLE
+Systembericht
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Kurz
+;
+MSG_REPORT_FULL
+Vollständig
+;
+MSG_REPORT_SAVE_AS
+Speichern als...
+;
+MSG_REPORT_FAILED
+Berichtsvorschau konnte nicht erstellt werden
+;
+MSG_BTN_REPORT
+BERICHT
+;
+MSG_NETWORK
+Netzwerk
+;
+MSG_NOT_RUNNING
+nicht aktiv
 ;

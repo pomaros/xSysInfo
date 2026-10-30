@@ -240,3 +240,29 @@ BOOL cpu_has_super_scalar(void)
 {
     return hw_info.has_super_scalar;
 }
+
+BOOL cache_setting_enabled(CacheSetting setting)
+{
+    switch (setting) {
+        case CACHE_ICACHE: return hw_info.icache_enabled;
+        case CACHE_DCACHE: return hw_info.dcache_enabled;
+        case CACHE_IBURST: return hw_info.iburst_enabled;
+        case CACHE_DBURST: return hw_info.dburst_enabled;
+        case CACHE_CBACK: return hw_info.copyback_enabled;
+        case CACHE_SUPER_SCALAR: return hw_info.super_scalar_enabled;
+        default: return FALSE;
+    }
+}
+
+void toggle_cache_setting(CacheSetting setting)
+{
+    switch (setting) {
+        case CACHE_ICACHE: toggle_icache(); break;
+        case CACHE_DCACHE: toggle_dcache(); break;
+        case CACHE_IBURST: toggle_iburst(); break;
+        case CACHE_DBURST: toggle_dburst(); break;
+        case CACHE_CBACK: toggle_copyback(); break;
+        case CACHE_SUPER_SCALAR: toggle_super_scalar(); break;
+        default: break;
+    }
+}

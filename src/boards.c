@@ -19,6 +19,8 @@
 
 #include "xsysinfo.h"
 #include "boards.h"
+#include "growlist.h"
+#include "format.h"
 #include "gui.h"
 #include "locale_str.h"
 #include "debug.h"
@@ -28,7 +30,8 @@
 
 #define BOARD_LIST_FIRST_Y 56
 #define BOARD_LIST_LINE_H 10
-#define BOARD_LIST_BOTTOM_PAD 50
+/* Navigation stays at y=188 regardless of screen height. */
+#define BOARD_LIST_ROWS 13
 
 #define OPENPCI_MANUFACTURER_FIRST 1729
 #define OPENPCI_MANUFACTURER_LAST  1735
@@ -103,7 +106,9 @@ static BOOL append_zorro_board(struct ConfigDev *cd, const char *manufacturer,
 {
     BoardInfo *board;
 
-    if (board_list.count >= MAX_BOARDS)
+    if (!grow_list((APTR *)&board_list.boards, &board_list.capacity,
+                   board_list.count, board_list.count + 1,
+                   sizeof(BoardInfo), MAX_BOARDS))
         return FALSE;
 
     board = &board_list.boards[board_list.count];
@@ -113,6 +118,9 @@ static BOOL append_zorro_board(struct ConfigDev *cd, const char *manufacturer,
     board->manufacturer_id = cd->cd_Rom.er_Manufacturer;
     board->product_id = cd->cd_Rom.er_Product;
     board->serial_number = (ULONG)cd->cd_Rom.er_SerialNumber;
+    board->diagnostic_vector = cd->cd_Rom.er_InitDiagVec;
+    board->autoconfig_type = cd->cd_Rom.er_Type;
+    board->autoconfig_flags = cd->cd_Rom.er_Flags;
 
     debug("  boards: Found Zorro board at $%08X\n",
           (ULONG)board->board_address);
@@ -164,7 +172,9 @@ static BOOL append_pci_board(struct pci_dev *pci, const char *manufacturer,
 {
     BoardInfo *board;
 
-    if (board_list.count >= MAX_BOARDS)
+    if (!grow_list((APTR *)&board_list.boards, &board_list.capacity,
+                   board_list.count, board_list.count + 1,
+                   sizeof(BoardInfo), MAX_BOARDS))
         return FALSE;
 
     if (!pci)
@@ -327,6 +337,12 @@ static void enumerate_zorro_boards_raw(void)
     CloseLibrary(ExpansionBase);
 }
 
+void free_board_list(void)
+{
+    free_list((APTR *)&board_list.boards, &board_list.capacity, sizeof(BoardInfo));
+    board_list.count = 0;
+}
+
 /*
  * Enumerate all expansion boards
  */
@@ -334,7 +350,7 @@ void enumerate_boards(void)
 {
     debug("  boards: Starting enumeration...\n");
 
-    memset(&board_list, 0, sizeof(board_list));
+    free_board_list();
 
     if (IdentifyBase) {
         enumerate_zorro_boards_with_identify();
@@ -351,36 +367,93 @@ static void draw_board_field_clipped(WORD x, WORD y, const char *text,
     draw_text_clipped(x, y, text, max_x - x);
 }
 
-static LONG visible_board_rows(void)
-{
-    LONG rows;
-
-    rows = ((LONG)app->screen_height - BOARD_LIST_BOTTOM_PAD -
-            BOARD_LIST_FIRST_Y + BOARD_LIST_LINE_H - 1) / BOARD_LIST_LINE_H;
-    return rows > 0 ? rows : 1;
-}
-
 static LONG max_board_scroll(void)
 {
-    LONG rows = visible_board_rows();
-
-    if ((LONG)board_list.count <= rows) {
+    if (board_list.count <= BOARD_LIST_ROWS) {
         return 0;
     }
 
-    return (LONG)board_list.count - rows;
+    return (LONG)board_list.count - BOARD_LIST_ROWS;
 }
 
 /*
  * Draw boards view
  */
-void draw_boards_view(void)
+static void draw_board_list(void)
 {
     struct RastPort *rp = app->rp;
     WORD y;
     ULONG i;
     char buffer[128];
+
+    /* Draw board entries */
+    if (app->board_scroll > max_board_scroll()) {
+        app->board_scroll = max_board_scroll();
+    }
+
+    y = BOARD_LIST_FIRST_Y;
+    for (i = app->board_scroll;
+         i < board_list.count && i < (ULONG)app->board_scroll + BOARD_LIST_ROWS;
+         i++) {
+
+        BoardInfo *board = &board_list.boards[i];
+
+        SetAPen(rp, COLOR_HIGHLIGHT);
+        SetBPen(rp, COLOR_BACKGROUND);
+
+        /* Address */
+        draw_board_field_clipped(25, y, board->address_string, 136);
+
+        /* Size */
+        draw_board_field_clipped(136, y, board->size_string, 214);
+
+        /* Type */
+        draw_board_field_clipped(214, y,
+                                 get_board_type_string(board->board_type),
+                                 296);
+
+        draw_board_field_clipped(296, y,
+            format_board_field(board, app->board_display, BOARD_FIELD_PRODUCT,
+                               buffer, sizeof(buffer)), 420);
+        draw_board_field_clipped(420, y,
+            format_board_field(board, app->board_display, BOARD_FIELD_MANUFACTURER,
+                               buffer, sizeof(buffer)), 550);
+        draw_board_field_clipped(550, y,
+            format_board_field(board, app->board_display, BOARD_FIELD_SERIAL,
+                               buffer, sizeof(buffer)), SCREEN_WIDTH - 4);
+
+        y += BOARD_LIST_LINE_H;
+    }
+
+    if (board_list.count == 0) {
+        SetAPen(rp, COLOR_TEXT);
+        SetBPen(rp, COLOR_BACKGROUND);
+        draw_text_clipped(200, 120, get_string(MSG_BOARDS_NO_BOARDS_FOUND),
+                          SCREEN_WIDTH - 204);
+    }
+}
+
+static void draw_board_buttons(void)
+{
     Button *btn;
+
+    /* Draw bottom buttons */
+    btn = find_button(BTN_BOARD_PREV);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_BOARD_NEXT);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_BOARD_DISPLAY);
+    if (btn) draw_cycle_button(btn);
+    btn = find_button(BTN_BOARD_DETAILS);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_BOARD_EXIT);
+    if (btn) draw_button(btn);
+}
+
+void draw_boards_view(void)
+{
+    struct RastPort *rp = app->rp;
+    WORD y;
 
     /* Draw title panel */
     draw_panel(20,  0, 600, 24, NULL);
@@ -403,85 +476,22 @@ void draw_boards_view(void)
     Move(rp, 20, y + 4);
     Draw(rp, 628, y + 4);
 
-    /* Draw board entries */
-    if (app->board_scroll > max_board_scroll()) {
-        app->board_scroll = max_board_scroll();
-    }
+    draw_board_list();
+    draw_board_buttons();
+}
 
-    y = BOARD_LIST_FIRST_Y;
-    for (i = app->board_scroll;
-         i < board_list.count && y < app->screen_height - BOARD_LIST_BOTTOM_PAD;
-         i++) {
+static void refresh_board_list(void)
+{
+    struct RastPort *rp = app->rp;
+    WORD top = BOARD_LIST_FIRST_Y - rp->TxBaseline;
+    WORD bottom = top + (BOARD_LIST_ROWS - 1) * BOARD_LIST_LINE_H +
+                  rp->TxHeight - 1;
 
-        BoardInfo *board = &board_list.boards[i];
-
-        SetAPen(rp, COLOR_HIGHLIGHT);
-        SetBPen(rp, COLOR_BACKGROUND);
-
-        /* Address */
-        draw_board_field_clipped(25, y, board->address_string, 136);
-
-        /* Size */
-        draw_board_field_clipped(136, y, board->size_string, 214);
-
-        /* Type */
-        draw_board_field_clipped(214, y,
-                                 get_board_type_string(board->board_type),
-                                 296);
-
-        /* Product */
-        if (app->board_display == BOARD_DISPLAY_NAMES) {
-            snprintf(buffer, sizeof(buffer), "%s", board->product_name);
-        } else if (app->board_display == BOARD_DISPLAY_HEX) {
-            snprintf(buffer, sizeof(buffer),
-                     board->board_type == BOARD_PCI ? "$%04lX" : "$%02lX",
-                     (unsigned long)board->product_id);
-        } else {
-            snprintf(buffer, sizeof(buffer), "%u", board->product_id);
-        }
-        draw_board_field_clipped(296, y, buffer, 420);
-
-        /* Manufacturer */
-        if (app->board_display == BOARD_DISPLAY_NAMES) {
-            snprintf(buffer, sizeof(buffer), "%s", board->manufacturer_name);
-        } else if (app->board_display == BOARD_DISPLAY_HEX) {
-            snprintf(buffer, sizeof(buffer), "$%04lX",
-                     (unsigned long)board->manufacturer_id);
-        } else {
-            snprintf(buffer, sizeof(buffer), "%u", board->manufacturer_id);
-        }
-        draw_board_field_clipped(420, y, buffer, 550);
-
-        /* Serial or PCI class */
-        if (board->board_type == BOARD_PCI ||
-            app->board_display == BOARD_DISPLAY_NAMES) {
-            snprintf(buffer, sizeof(buffer), "%s", board->detail_string);
-        } else {
-            snprintf(buffer, sizeof(buffer),
-                     app->board_display == BOARD_DISPLAY_HEX ? "$%08lX" : "%lu",
-                     (unsigned long)board->serial_number);
-        }
-        draw_board_field_clipped(550, y, buffer, SCREEN_WIDTH - 4);
-
-        y += BOARD_LIST_LINE_H;
-    }
-
-    if (board_list.count == 0) {
-        SetAPen(rp, COLOR_TEXT);
-        SetBPen(rp, COLOR_BACKGROUND);
-        draw_text_clipped(200, 120, get_string(MSG_BOARDS_NO_BOARDS_FOUND),
-                          SCREEN_WIDTH - 204);
-    }
-
-    /* Draw bottom buttons */
-    btn = find_button(BTN_BOARD_PREV);
-    if (btn) draw_button(btn);
-    btn = find_button(BTN_BOARD_NEXT);
-    if (btn) draw_button(btn);
-    btn = find_button(BTN_BOARD_DISPLAY);
-    if (btn) draw_cycle_button(btn);
-    btn = find_button(BTN_BOARD_EXIT);
-    if (btn) draw_button(btn);
+    SetAPen(rp, COLOR_BACKGROUND);
+    RectFill(rp, 20, top, SCREEN_WIDTH - 1, bottom);
+    draw_board_list();
+    update_button_states();
+    draw_board_buttons();
 }
 
 /*
@@ -497,6 +507,9 @@ void boards_view_update_buttons(void)
     add_button(170, 188, 100, 12,
                get_string(display_labels[app->board_display]),
                BTN_BOARD_DISPLAY, board_list.count > 0);
+
+    add_button(290, 188, 100, 12, get_string(MSG_BOARD_DETAILS),
+               BTN_BOARD_DETAILS, board_list.count > 0);
 
     if (max_scroll > 0) {
         add_button(20, 188, 60, 12,
@@ -523,20 +536,27 @@ void boards_view_handle_button(ButtonID id)
         case BTN_BOARD_PREV:
             if (app->board_scroll > 0) {
                 app->board_scroll--;
-                redraw_current_view();
+                refresh_board_list();
             }
             break;
 
         case BTN_BOARD_NEXT:
             if (app->board_scroll < max_board_scroll()) {
                 app->board_scroll++;
-                redraw_current_view();
+                refresh_board_list();
             }
             break;
 
         case BTN_BOARD_DISPLAY:
             app->board_display = (app->board_display + 1) % BOARD_DISPLAY_COUNT;
-            redraw_current_view();
+            refresh_board_list();
+            break;
+
+        case BTN_BOARD_DETAILS:
+            if (board_list.count) {
+                app->selected_board = app->board_scroll;
+                switch_to_view(VIEW_BOARD_DETAILS);
+            }
             break;
 
         case BTN_BOARD_EXIT:

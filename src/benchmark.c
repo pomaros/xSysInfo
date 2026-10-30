@@ -12,13 +12,18 @@
 #include <exec/memory.h>
 #include <devices/timer.h>
 #include <hardware/cia.h>
+#include <hardware/custom.h>
+#include <hardware/dmabits.h>
+#include <mmu/context.h>
 
 #include <proto/exec.h>
+#include <proto/mmu.h>
 #include <proto/timer.h>
 #include <clib/alib_protos.h>
 
 #include "xsysinfo.h"
 #include "benchmark.h"
+#include "probeclock.h"
 #include "hardware.h"
 #include "debug.h"
 #include "cpu.h"
@@ -65,13 +70,9 @@ void format_reference_label(char *buffer, size_t buffer_size, const ReferenceSys
 
 /* Timer resources */
 static struct MsgPort *timer_port = NULL;
-static struct MsgPort *etimer_port = NULL;
 static struct timerequest *timer_req = NULL;
 struct Device *TimerBase = NULL;
 static BOOL timer_open = FALSE;
-static struct timerequest *etimer_req = NULL;
-struct Device *ETimerBase = NULL;
-static BOOL etimer_open = FALSE;
 
 
 /* External references */
@@ -104,38 +105,6 @@ BOOL init_timer(void)
     timer_open = TRUE;
     TimerBase = (struct Device *)timer_req->tr_node.io_Device;
 
-    if (SysBase->LibNode.lib_Version < 36) {
-        return TRUE;
-    }
-
-    etimer_port = CreatePort(NULL, 0);
-    if (!etimer_port) {
-        debug("    init_timer: no etimer_port, falling back to microhz timer\n");
-        return TRUE;
-    }
-
-    etimer_req = (struct timerequest *)
-        CreateExtIO(etimer_port, sizeof(struct timerequest));
-    if (!etimer_req) {
-        debug("    init_timer: no etimer_req, falling back to microhz timer\n");
-        DeletePort(etimer_port);
-        etimer_port = NULL;
-        return TRUE;
-    }
-
-    if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_ECLOCK,
-                   (struct IORequest *)etimer_req, 0) != 0) {
-        debug("    init_timer: no OpenDevice etimer_req, falling back to microhz timer\n");
-        DeleteExtIO((struct IORequest *)etimer_req);
-        etimer_req = NULL;
-        DeletePort(etimer_port);
-        etimer_port = NULL;
-        return TRUE;
-    }
-
-    ETimerBase = (struct Device *)etimer_req->tr_node.io_Device;
-    etimer_open = TRUE;
-
     return TRUE;
 }
 
@@ -154,29 +123,12 @@ void cleanup_timer(void)
         timer_req = NULL;
     }
 
-    if (etimer_open) {
-        CloseDevice((struct IORequest *)etimer_req);
-        etimer_open = FALSE;
-    }
-
-    if (etimer_req) {
-        DeleteExtIO((struct IORequest *)etimer_req);
-        etimer_req = NULL;
-    }
-
     if (timer_port) {
         DeletePort(timer_port);
         timer_port = NULL;
     }
 
-    if (etimer_port) {
-        DeletePort(etimer_port);
-        etimer_port = NULL;
-    }
-
-
     TimerBase = NULL;
-    ETimerBase = NULL;
 }
 
 BOOL benchmark_timer_available(void)
@@ -211,18 +163,9 @@ ULONG read_benchmark_clock(struct EClockVal *val)
         return 0;
     }
 
-    if (ETimerBase && etimer_open) {
+    if (TimerBase->dd_Library.lib_Version >= 36 &&
+        SysBase->LibNode.lib_Version >= 36) {
         return ReadEClock(val);
-    }
-
-    if (SysBase->LibNode.lib_Version >= 36) {
-        /*
-         * GetSysTime() is a V36+ timer.device call. timeval and EClockVal
-         * share the same two ULONG fields, so the diff helper below can
-         * reuse them; returning 0 selects its microsecond path.
-         */
-        GetSysTime((struct timeval *)val);
-        return 0;
     }
 
     /*
@@ -239,11 +182,93 @@ ULONG read_benchmark_clock(struct EClockVal *val)
     return hw_info.is_pal ? 50 : 60;
 }
 
-/* Use short interrupt-disabled windows for clock estimates on V36+.
- * Forbid stays active across the samples, while Enable lets pending device
- * interrupts run between them. The Kickstart 1.3 TOD clock is too coarse
- * for these windows, so it keeps the existing interrupt-enabled timing.
- */
+/* Timed runs are repeated with more work until the last one lasts long
+ * enough that the clock jitter seen so far is below 1/JITTER_FACTOR of
+ * it. A fine clock accepts the first run that reaches the floor. A clock
+ * that advances in steps (the Kickstart 1.3 TOD fallback, or a JIT
+ * emulator that only advances time once per frame) reads 0 for short
+ * runs and then jumps, and the jump sizes the run. */
+#define JITTER_FACTOR 25
+#define RUN_CAP_US 1000000UL
+
+/* Runs count units of work, returns the elapsed microseconds or 0. */
+typedef ULONG (*timed_run_fn)(void *ctx, ULONG count);
+
+/* The clock frequency is its resolution: the E-clock gives about 1 us,
+ * the Kickstart 1.3 TOD fallback 20 ms. */
+static ULONG clock_floor_us(ULONG floor_us)
+{
+    struct EClockVal now;
+    ULONG frequency = read_benchmark_clock(&now), step;
+
+    if (!frequency)
+        return floor_us;
+    step = (1000000UL + frequency - 1) / frequency;
+    if (step > floor_us / JITTER_FACTOR)
+        floor_us = step * JITTER_FACTOR;
+    return floor_us;
+}
+
+/* Continues from a first run of count that took us. Returns the count of
+ * the accepted run and its time in elapsed_us. */
+static ULONG run_until_steady(timed_run_fn run, void *ctx, ULONG count,
+                              ULONG us, ULONG max_count, ULONG floor_us,
+                              ULONG *elapsed_us)
+{
+    ULONG other_count, other_us;
+    uint64_t next, expected, step;
+    BOOL compared = FALSE;
+
+    floor_us = clock_floor_us(floor_us);
+    for (;;) {
+        debug("  bench: %lu in %lu us, floor %lu us\n", count, us, floor_us);
+        if ((compared && us >= floor_us) || us >= RUN_CAP_US ||
+            count >= max_count)
+            break;
+
+        if (us >= floor_us) {
+            /* One reading cannot show whether the clock followed the
+             * work: check it against a run of half the work. */
+            other_count = count / 2 ? count / 2 : 1;
+            other_us = run(ctx, other_count);
+            debug("  bench: %lu in %lu us to confirm\n", other_count, other_us);
+            expected = (uint64_t)us * other_count / count;
+            step = other_us > expected ? other_us - expected : expected - other_us;
+        } else {
+            /* Aim one run past the floor, at least doubling. */
+            next = (uint64_t)count * 2;
+            if (us)
+                next = (uint64_t)count * floor_us / us + count;
+            if (next < (uint64_t)count * 2)
+                next = (uint64_t)count * 2;
+            if (next > max_count)
+                next = max_count;
+            other_count = count;
+            other_us = us;
+            count = (ULONG)next;
+            us = run(ctx, count);
+
+            /* The miss against the scaled previous reading, taken back to
+             * that reading's scale, is the size of a clock step. A previous
+             * reading of 0 leaves the first nonzero reading as the step. */
+            expected = (uint64_t)other_us * count / other_count;
+            step = us > expected ? us - expected : expected - us;
+            if (other_us)
+                step = step * other_count / count;
+        }
+        compared = TRUE;
+        step *= JITTER_FACTOR;
+        if (step > ULONG_MAX)
+            step = ULONG_MAX;
+        if (step > floor_us)
+            floor_us = (ULONG)step;
+    }
+    *elapsed_us = us;
+    return count;
+}
+
+/* Dhrystone chunks still require the OS E-clock implementation. CPU/FPU
+ * estimates can also use a temporarily allocated CIA timer on older OSes. */
 static BOOL frequency_eclock_available(void)
 {
     return TimerBase && TimerBase->dd_Library.lib_Version >= 36 &&
@@ -257,7 +282,10 @@ typedef struct {
     struct EClockVal start, end;
 } FrequencyFailure;
 
-static ULONG __attribute__((optimize("Os")))
+/* These delimit the actual timed instructions, including a page crossing. */
+extern const UBYTE frequency_cpu_loop[], frequency_cpu_loop_end[];
+
+static ULONG __attribute__((noinline, noclone, optimize("Os")))
 frequency_sample(ULONG loops, BOOL fpu, ULONG *frequency,
                  FrequencyFailure *failure)
 {
@@ -266,7 +294,7 @@ frequency_sample(ULONG loops, BOOL fpu, ULONG *frequency,
     const char *reason = NULL;
 
     Disable();
-    first_rate = ReadEClock(&start);
+    first_rate = start_probe_clock(&start);
     if (fpu) {
         __asm__ volatile(
             "fmove.w #1,fp1\n\t"
@@ -280,13 +308,17 @@ frequency_sample(ULONG loops, BOOL fpu, ULONG *frequency,
             : "cc", "d1", "fp1");
     } else {
         __asm__ volatile(
+            ".globl _frequency_cpu_loop\n\t"
+            "_frequency_cpu_loop:\n\t"
             "1: subq.l #1,%0\n\t"
-            "bne.s 1b"
+            "bne.s 1b\n\t"
+            ".globl _frequency_cpu_loop_end\n\t"
+            "_frequency_cpu_loop_end:"
             : "+d"(loops)
             :
             : "cc");
     }
-    last_rate = ReadEClock(&end);
+    last_rate = read_probe_clock(&end);
     Enable();
 
     if (!first_rate)
@@ -296,8 +328,8 @@ frequency_sample(ULONG loops, BOOL fpu, ULONG *frequency,
         reason = "EClock frequency changed";
     else if (end.ev_hi != start.ev_hi + (end.ev_lo < start.ev_lo))
         reason = "invalid EClock interval";
-    else if (end.ev_lo == start.ev_lo)
-        reason = "EClock did not advance";
+    /* A short JIT loop can finish within one tick. Zero ticks is a valid
+     * sample; calibration grows the loop until the clock advances. */
     if (reason) {
         /* Preserve the first failed sample; print only after Permit(). */
         if (!failure->reason) {
@@ -312,6 +344,59 @@ frequency_sample(ULONG loops, BOOL fpu, ULONG *frequency,
     }
     *frequency = first_rate;
     return end.ev_lo - start.ev_lo;
+}
+
+/* The 040/060 calibration assumes cached instruction fetches. Chip RAM
+ * is normally cache inhibited by the CPU library, even with CACR enabled.
+ * A bus-bound loop measures memory/DMA contention, not the CPU clock.
+ * Read the active mapping without changing cache or MMU configuration.
+ */
+static BOOL frequency_code_cacheable(void)
+{
+    struct Library *MMUBase;
+    ULONG first = (ULONG)frequency_cpu_loop;
+    ULONG last = (ULONG)frequency_cpu_loop_end - 1;
+    ULONG first_flags, last_flags;
+    BOOL cacheable;
+
+    if (hw_info.cpu_type < CPU_68040 || hw_info.cpu_type > CPU_68LC060)
+        return TRUE;
+    if (!hw_info.icache_enabled) {
+        debug("    cpu_mhz: unavailable, instruction cache disabled\n");
+        return FALSE;
+    }
+
+    MMUBase = open_mmu_library();
+    if (MMUBase) {
+        if (GetPageSize(NULL)) {
+            first_flags = GetPagePropertiesA(NULL, first, NULL);
+            last_flags = GetPagePropertiesA(NULL, last, NULL);
+            CloseLibrary(MMUBase);
+            cacheable = !((first_flags | last_flags) &
+                          (MAPP_CACHEINHIBIT | MAPP_INVALID));
+            debug("    clock CPU code: $%08lx..$%08lx, "
+                  "MMU flags $%08lx/$%08lx\n",
+                  first, last, first_flags, last_flags);
+            if (!cacheable)
+                debug("    cpu_mhz: unavailable, timing code is not cacheable\n");
+            return cacheable;
+        }
+        CloseLibrary(MMUBase);
+    }
+
+    /* Without MMULib, do not assume that Chip RAM permits I-cache fills.
+     * Consult the known remapping first, e.g. code remapped to Fast RAM.
+     */
+    first_flags = TypeOfMem(mmu_physical_address((APTR)first));
+    last_flags = TypeOfMem(mmu_physical_address((APTR)last));
+    debug("    clock CPU code: $%08lx..$%08lx, "
+          "memory flags $%08lx/$%08lx, MMU cache policy unknown\n",
+          first, last, first_flags, last_flags);
+    if ((first_flags | last_flags) & MEMF_CHIP) {
+        debug("    cpu_mhz: unavailable, timing code in Chip RAM\n");
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /* Return the equivalent runtime in microseconds for reference_loops, so
@@ -345,23 +430,23 @@ frequency_loop_time_once(ULONG reference_loops, BOOL fpu, ULONG attempt)
      * sample, even at the smallest count used below. Timer/setup overhead
      * must not make calibration accept a nearly empty interval. Longer
      * samples reduce E-clock quantization and residual setup/cache bias.
-     * Keep measured intervals within 2 ms; a complete Disable/Enable
-     * window also includes timer work outside those timestamps. */
+     * Keep measured intervals within 2 ms, or 4 ms on a 68000/010. The
+     * slower CPUs need room for timer overhead as well as 1 ms of work. */
     for (;;) {
         shorter = frequency_sample(short_loops, fpu, &frequency, &failure);
-        if (!shorter)
+        if (failure.reason)
             goto done;
         min_delta = (frequency - 1) / 1000 + 1;
-        max_ticks = frequency / 500;
+        max_ticks = frequency / (hw_info.cpu_type <= CPU_68010 ? 250 : 500);
         if (shorter >= max_ticks) {
             reason = "timer overhead leaves no loop interval";
             goto done;
         }
         ticks = frequency_sample(loops, fpu, &frequency, &failure);
-        if (!ticks)
+        if (failure.reason)
             goto done;
         if (ticks > max_ticks) {
-            reason = "calibration sample exceeds 2 ms";
+            reason = "calibration sample exceeds time limit";
             goto done;
         }
         sample_loops = loops - 3 * (loops / 16);
@@ -384,7 +469,7 @@ frequency_loop_time_once(ULONG reference_loops, BOOL fpu, ULONG attempt)
              * Slower CPUs can use a count between successive doublings. */
             ULONG budget = max_ticks - ((frequency - 1) / 10000 + 1);
             if (shorter >= budget) {
-                reason = "insufficient loop interval within 2 ms";
+                reason = "insufficient loop interval within time limit";
                 goto done;
             }
             uint64_t limit = short_loops +
@@ -394,7 +479,7 @@ frequency_loop_time_once(ULONG reference_loops, BOOL fpu, ULONG attempt)
                 next_loops = limit;
         }
         if (next_loops <= loops) {
-            reason = "insufficient loop interval within 2 ms";
+            reason = "insufficient loop interval within time limit";
             goto done;
         }
         loops = next_loops;
@@ -417,16 +502,15 @@ frequency_loop_time_once(ULONG reference_loops, BOOL fpu, ULONG attempt)
         }
         if (failure.reason)
             goto done;
-        if (baseline <= shorter) {
-            reason = "baseline sample not longer than tiny sample";
-            goto done;
-        }
+        /* The short sample only diagnoses fixed overhead. Its 68000 loop
+         * can be close enough to the baseline for timer noise to invert
+         * their order; the measured slope uses long minus baseline. */
         if (ticks <= baseline) {
             reason = "long sample not longer than baseline";
             goto done;
         }
         if (ticks > max_ticks) {
-            reason = "sample exceeds 2 ms";
+            reason = "sample exceeds time limit";
             goto done;
         }
         short_total += shorter;
@@ -514,11 +598,13 @@ static ULONG frequency_loop_time(ULONG reference_loops, BOOL fpu)
 /*
  * Returns the CPU-frequencies in MHz scaled by 100
 */
-ULONG get_mhz_cpu(void)
+static ULONG get_mhz_cpu(BOOL precise)
 {
 
     ULONG multiplier, loop, maxMultiplier, startMultiplier;
     uint64_t count = 0, tmp, mhz = 0;
+    const ULONG min_measure = !precise && SysBase->LibNode.lib_Version < 36 ?
+                              1000000UL : MIN_MHZ_MEASURE;
     APTR test; //for testing the memtype we are running in
 
     // correction factors for fast CPUs!
@@ -542,18 +628,23 @@ ULONG get_mhz_cpu(void)
         }
 
 
-    for (multiplier = startMultiplier; multiplier <= maxMultiplier && count < MIN_MHZ_MEASURE; multiplier *= 2)
+    for (multiplier = startMultiplier; multiplier <= maxMultiplier && count < min_measure; multiplier *= 2)
     {
         loop = CPULOOPS * multiplier;
-        count = frequency_eclock_available() ?
+        count = precise ?
                 frequency_loop_time(loop, FALSE) : measure_loop_overhead(loop);
         /* A failed measurement must not masquerade as a nominal clock. */
-        if (!count && frequency_eclock_available())
+        if (!count && precise)
             return 0;
-        if (multiplier >= maxMultiplier || count >= MIN_MHZ_MEASURE) {
+        if (multiplier >= maxMultiplier || count >= min_measure) {
             break;
         }
     }
+
+    /* Do not report a one-tick result if the coarse fallback cannot reach
+     * its one-second target within the existing loop limit. */
+    if (count < min_measure)
+        return 0;
 
     tmp = BASE_FACTOR * (uint64_t)multiplier;
 
@@ -574,7 +665,7 @@ ULONG get_mhz_cpu(void)
                 /* MC68000UM, sections 8.4/8.8 and 9.4/9.8:
                  * zero-wait-state SUBQ.L (8 clocks) + taken Bcc (10).
                  * Differencing cancels the final, non-taken branch. */
-                if (frequency_eclock_available())
+                if (precise)
                     tmp = (uint64_t)loop * 18 * 100;
                 else
                     tmp *= 204;
@@ -593,7 +684,7 @@ ULONG get_mhz_cpu(void)
             /* MC68030 manual, sections 11.3.4, 11.6.9 and 11.6.15:
              * cached SUBQ.L (2 clocks) + taken Bcc (6 clocks).
              * Differencing cancels the final, non-taken branch. */
-            if (frequency_eclock_available() && hw_info.icache_enabled)
+            if (precise && hw_info.icache_enabled)
                 tmp = (uint64_t)loop * 8 * 100;
             else
                 tmp *= 88;
@@ -609,7 +700,7 @@ ULONG get_mhz_cpu(void)
         case CPU_68LC060:
         case CPU_68080:
             tmp *= 1085;
-            if (hw_info.mmu_enabled || hw_info.cpu_type == CPU_68080) {
+            if (hw_info.mmu_present || hw_info.cpu_type == CPU_68080) {
                 if (hw_info.super_scalar_enabled) {
                     count *=100;
                 }
@@ -670,7 +761,7 @@ ULONG get_mhz_cpu(void)
 /*
  * Returns the FPU frequency in MHz scaled by 100
 */
-ULONG get_mhz_fpu(void)
+static ULONG get_mhz_fpu(BOOL precise)
 {
 
     /* make some sanity tests:
@@ -703,14 +794,16 @@ ULONG get_mhz_fpu(void)
         break;
     }
 
+    const ULONG min_measure = !precise && SysBase->LibNode.lib_Version < 36 ?
+                              1000000UL : MIN_MHZ_MEASURE;
     ULONG loop, multiplier, overhead;
     ULONG E_Freq;
     struct EClockVal start, end;
     uint64_t count = 0, tmp, mhz = 0;
-    for (multiplier = 1; multiplier <= MAX_MULTIPLY && count < MIN_MHZ_MEASURE; multiplier *= 2)
+    for (multiplier = 1; multiplier <= MAX_MULTIPLY && count < min_measure; multiplier *= 2)
     {
         loop = FPULOOPS * multiplier;
-        if (frequency_eclock_available()) {
+        if (precise) {
             count = frequency_loop_time(loop, TRUE);
             overhead = frequency_loop_time(loop, FALSE);
             if (!overhead || count <= overhead)
@@ -723,9 +816,10 @@ ULONG get_mhz_fpu(void)
                 "1:\t\tfdiv.x fp1,fp1\n\t"
                 "subq.l\t#1,%0\n\t"
                 "bne.s\t1b\n\t"
+                "fmove.l fp1,d1"
                 : "+d"(loop)
                 :
-                : "cc", "fp1");
+                : "cc", "d1", "fp1");
 
             E_Freq = read_benchmark_clock(&end);
             Permit();
@@ -733,13 +827,14 @@ ULONG get_mhz_fpu(void)
             count = EClock_Diff_in_ms(&start, &end, E_Freq);
             overhead = measure_loop_overhead(loop);
         }
-        if (count > overhead) {
-            count -= (uint64_t) overhead;
-        }
-        if (multiplier >= MAX_MULTIPLY || count >= MIN_MHZ_MEASURE) {
+        count = count > overhead ? count - overhead : 0;
+        if (multiplier >= MAX_MULTIPLY || count >= min_measure) {
             break;
         }
     }
+
+    if (count < min_measure)
+        return 0;
 
     tmp = BASE_FACTOR * (uint64_t) multiplier;
     debug("    fpu_mhz: results: %lu %lu %lu\n", (ULONG)count, (ULONG)tmp, overhead);
@@ -755,7 +850,7 @@ ULONG get_mhz_fpu(void)
             tmp *= 79;
             break;
         case FPU_68882:
-            if (frequency_eclock_available()) {
+            if (precise) {
                 /* Use the same empirical 68882 calibration for all CPUs
                  * and cache settings: 90 net cycles per iteration after
                  * subtracting the measured integer loop overhead.
@@ -873,8 +968,6 @@ static ULONG dhrystone_sample(ULONG loops, BOOL disable_interrupts,
         *failure = "EClock frequency changed";
     else if (end.ev_hi != start.ev_hi + (end.ev_lo < start.ev_lo))
         *failure = "invalid EClock interval";
-    else if (end.ev_lo == start.ev_lo)
-        *failure = "EClock did not advance";
     if (*failure)
         return 0;
 
@@ -890,31 +983,40 @@ static ULONG run_dhrystone_chunks(void)
     ULONG calibration_loops = 0, calibration_ticks = 0;
     ULONG target_ticks = 0, limit_ticks = 0, chunks = 0, total_loops = 0;
     ULONG shortest = ~0UL, longest = 0, attempt;
+    ULONG restarts = 0;
     uint64_t total_ticks = 0, next_loops, goal_ticks;
     const char *failure = NULL;
 
     if (!Dhry_Initialize()) return 0;
 
     Forbid();
-    for (attempt = 0; attempt < 3; attempt++) {
+    for (attempt = 0; attempt < 6; attempt++) {
         ticks = dhrystone_sample(loops, FALSE, &frequency, &failure);
-        if (!ticks) goto done;
+        if (failure) goto done;
         /* Aim for at least 10 ms of calibration on fast processors. */
-        if (ticks >= frequency / 100 || loops == max_loops || attempt == 2)
+        if ((ticks && (ticks >= frequency / 100 || attempt >= 2)) ||
+            loops == max_loops)
             break;
-        next_loops = (uint64_t)loops * frequency / (100ULL * ticks) + 1;
+        /* A short JIT run may finish before the clock advances. Grow the
+         * interruptible calibration, but still reject a stalled clock. */
+        next_loops = ticks ?
+            (uint64_t)loops * frequency / (100ULL * ticks) + 1 :
+            (uint64_t)loops * 16;
         loops = next_loops > max_loops ? max_loops : (ULONG)next_loops;
+    }
+    if (!ticks) {
+        failure = "EClock did not advance";
+        goto done;
     }
     calibration_loops = loops;
     calibration_ticks = ticks;
 
-    /* Target 75 ms, with a 90 ms rejection limit. Also bound both by the
-     * 16-bit hardware period if a machine reports an unusual E-clock rate.
+    /* Target 75 ms, with a 90 ms rejection limit: below the CIA timer
+     * period on PAL and NTSC machines. ReadEClock can instead expose a
+     * high-frequency host clock, whose ticks are not 16-bit CIA counts.
      * Enable() between chunks lets timer.device account for overflows. */
     limit_ticks = (uint64_t)frequency * 90 / 1000;
-    if (limit_ticks > 0xff00) limit_ticks = 0xff00;
     target_ticks = (uint64_t)frequency * 75 / 1000;
-    if (target_ticks >= limit_ticks) target_ticks = limit_ticks * 3 / 4;
     if (!target_ticks || (uint64_t)ticks >= (uint64_t)loops * limit_ticks) {
         failure = "iteration too long for EClock chunk";
         goto done;
@@ -932,8 +1034,23 @@ static ULONG run_dhrystone_chunks(void)
         if (loops > max_loops - total_loops)
             loops = max_loops - total_loops;
         ticks = dhrystone_sample(loops, TRUE, &frequency, &failure);
-        if (!ticks) goto done;
+        if (failure) goto done;
         if (ticks >= limit_ticks) {
+            /* JIT warm-up and host scheduling can invalidate calibration.
+             * Discard the whole attempt, rather than selecting only its
+             * fast chunks. Do not scale from a potentially wrapped time.
+             * Two halvings still leave room for two seconds in 128 chunks.
+             */
+            if (restarts < 2 && loops > 1 && target_ticks > 1) {
+                restarts++;
+                target_ticks /= 2;
+                loops /= 2;
+                chunks = total_loops = 0;
+                total_ticks = 0;
+                shortest = ~0UL;
+                longest = 0;
+                continue;
+            }
             failure = "chunk exceeds EClock timing limit";
             goto done;
         }
@@ -943,18 +1060,25 @@ static ULONG run_dhrystone_chunks(void)
         if (ticks < shortest) shortest = ticks;
         if (ticks > longest) longest = ticks;
 
-        /* Calibration can include interrupt work. Converge on the target
-         * using measured chunks, limiting growth to twice the loop count. */
-        next_loops = (uint64_t)loops * target_ticks / ticks;
+        /* JIT clocks may advance in coarse steps. Keep sub-tick work in
+         * the totals and grow the next chunk instead of dividing by zero.
+         * Calibration can include interrupt work, so limit growth to 2x. */
+        next_loops = ticks ? (uint64_t)loops * target_ticks / ticks :
+                            (uint64_t)loops * 2;
         if (next_loops > (uint64_t)loops * 2) next_loops = (uint64_t)loops * 2;
         if (next_loops > max_loops) next_loops = max_loops;
         loops = next_loops ? (ULONG)next_loops : 1;
     }
-    if (chunks == max_chunks && total_ticks < goal_ticks &&
+    if (!total_ticks)
+        failure = "EClock did not advance";
+    else if (chunks == max_chunks && total_ticks < goal_ticks &&
         total_loops < max_loops)
         failure = "chunk limit before sufficient elapsed time";
 done:
     Permit();
+    if (restarts)
+        debug("  bench: Dhrystone restarted %lu times after chunk overruns\n",
+              restarts);
     if (calibration_ticks)
         debug("  bench: Dhrystone calibration: %lu loops in %lu us\n",
               calibration_loops,
@@ -1066,16 +1190,26 @@ ULONG calculate_mips(ULONG dhrystones)
     return (ULONG)scaled;
 }
 
+static ULONG flops_run(void *ctx, ULONG iterations)
+{
+    struct EClockVal start, end;
+    ULONG E_Freq;
+
+    Forbid();
+    E_Freq = read_benchmark_clock(&start);
+    DoFlops(iterations, *(ULONG *)ctx);
+    E_Freq = read_benchmark_clock(&end);
+    Permit();
+    return EClock_Diff_in_ms(&start, &end, E_Freq);
+}
+
 /*
  * Run MFLOPS benchmark (floating point)
  */
 ULONG run_mflops_benchmark(void)
 {
-    struct EClockVal start, end;
-    ULONG E_Freq;
-    uint64_t elapsed = 0;
-    ULONG iterations = 50000;
-    ULONG multiplier;
+    ULONG elapsed = 0;
+    ULONG iterations;
     ULONG fpu;
 
     /* Check if FPU is available */
@@ -1114,17 +1248,11 @@ ULONG run_mflops_benchmark(void)
         return 0;
     }
 
-    for (multiplier = 1; multiplier <= MAX_MULTIPLY && elapsed < MIN_FLOP_MEASURE; multiplier++)
-    {
-        iterations = FLOPS_BASE_LOOPS * multiplier;
-        Forbid();
-        E_Freq = read_benchmark_clock(&start);
-        DoFlops(iterations, fpu);
-        E_Freq = read_benchmark_clock(&end);
-        Permit();
-        elapsed = EClock_Diff_in_ms(&start, &end, E_Freq);
-    }
-    debug("  bench: flops elapsed: %lu, loops %lu\n", (ULONG)elapsed, iterations);
+    iterations = run_until_steady(flops_run, &fpu, FLOPS_BASE_LOOPS,
+                                  flops_run(&fpu, FLOPS_BASE_LOOPS),
+                                  FLOPS_BASE_LOOPS * MAX_MULTIPLY,
+                                  MIN_FLOP_MEASURE, &elapsed);
+    debug("  bench: flops elapsed: %lu, loops %lu\n", elapsed, iterations);
 
     /* Calculate MFLOPS * 100 using integer math */
     if (elapsed > 0) {
@@ -1262,6 +1390,56 @@ static ULONG measure_mem_read_speed_once(volatile ULONG *src, ULONG buffer_size,
     return 0;
 }
 
+struct mem_run {
+    volatile ULONG *src;
+    ULONG buffer_size;
+    ULONG speed;
+};
+
+static ULONG mem_run(void *ctx, ULONG iterations)
+{
+    struct mem_run *m = ctx;
+    ULONG elapsed_us = 0;
+
+    m->speed = measure_mem_read_speed_once(m->src, m->buffer_size,
+                                           iterations, &elapsed_us);
+    return m->speed ? elapsed_us : 0;
+}
+
+static ULONG measure_mem_read_speed_now(volatile ULONG *src,
+                                        ULONG buffer_size, ULONG iterations)
+{
+    struct mem_run m = { src, buffer_size, 0 };
+    ULONG elapsed_us;
+
+    if (!iterations)
+        iterations = 1;
+    elapsed_us = mem_run(&m, iterations);
+
+    /* Slow memory runs long enough on the first pass. A failed pass is
+     * too short for the clock, not slow. */
+    if (m.speed && m.speed < MEM_SPEED_FAST_THRESHOLD)
+        return m.speed;
+
+    run_until_steady(mem_run, &m, iterations, elapsed_us,
+                     MEM_SPEED_MAX_ITERATIONS, MEM_SPEED_TARGET_US,
+                     &elapsed_us);
+    return m.speed;
+}
+
+/* Chip RAM shares its bus with the display. Bitplane and sprite DMA take
+ * a share that depends on the screen mode in front, so a reading with
+ * the display on compares screens, not machines. Measure Chip RAM with
+ * that DMA off; the bitmaps stay intact and the view returns afterwards.
+ * Copper, audio and disk DMA keep running; their share is negligible. */
+#define DISPLAY_DMA (DMAF_RASTER | DMAF_SPRITE)
+
+static BOOL chip_memory(volatile ULONG *src)
+{
+    return hw_info.agnus_type != AGNUS_UNKNOWN &&
+           (TypeOfMem(mmu_physical_address((APTR)src)) & MEMF_CHIP) != 0;
+}
+
 /*
  * Measure memory read speed for a given address range
  * Returns speed in bytes per second
@@ -1269,44 +1447,24 @@ static ULONG measure_mem_read_speed_once(volatile ULONG *src, ULONG buffer_size,
 ULONG measure_mem_read_speed(volatile ULONG *src, ULONG buffer_size,
                              ULONG iterations)
 {
-    ULONG elapsed_us = 0;
-    ULONG test_iterations;
-    ULONG speed;
+    volatile struct Custom *hw = (volatile struct Custom *)0xdff000;
+    ULONG speed, live = 0;
+    UWORD dma;
 
-    test_iterations = iterations ? iterations : 1;
-    speed = measure_mem_read_speed_once(src, buffer_size, test_iterations,
-                                        &elapsed_us);
+    if (!chip_memory(src))
+        return measure_mem_read_speed_now(src, buffer_size, iterations);
 
-    while (speed >= MEM_SPEED_FAST_THRESHOLD &&
-           elapsed_us < MEM_SPEED_TARGET_US &&
-           test_iterations < MEM_SPEED_MAX_ITERATIONS) {
-        uint64_t next_iterations;
+    if (g_debug_enabled)
+        live = measure_mem_read_speed_now(src, buffer_size, iterations);
 
-        if (elapsed_us > 0) {
-            next_iterations = ((uint64_t)MEM_SPEED_TARGET_US *
-                               test_iterations) / elapsed_us;
-            next_iterations += test_iterations;
-        } else {
-            next_iterations = (uint64_t)test_iterations * 2;
-        }
+    dma = hw->dmaconr & DISPLAY_DMA;
+    hw->dmacon = DISPLAY_DMA;
+    speed = measure_mem_read_speed_now(src, buffer_size, iterations);
+    hw->dmacon = DMAF_SETCLR | dma;
 
-        if (next_iterations <= test_iterations)
-            next_iterations = (uint64_t)test_iterations * 2;
-        if (next_iterations > MEM_SPEED_MAX_ITERATIONS)
-            next_iterations = MEM_SPEED_MAX_ITERATIONS;
-        if (next_iterations == test_iterations)
-            break;
-
-        debug("  bench: memory speed %lu B/s in %lu us, retrying with "
-              "%lu iterations\n",
-              speed, elapsed_us, (ULONG)next_iterations);
-
-        test_iterations = (ULONG)next_iterations;
-        elapsed_us = 0;
-        speed = measure_mem_read_speed_once(src, buffer_size, test_iterations,
-                                            &elapsed_us);
-    }
-
+    if (g_debug_enabled)
+        debug("  bench: chip RAM %lu B/s with display DMA $%04lx, "
+              "%lu B/s with it off\n", live, (ULONG)dma, speed);
     return speed;
 }
 
@@ -1347,7 +1505,7 @@ void run_memory_speed_tests(void)
         (volatile ULONG *)0xF80000, buffer_size, iterations);
 }
 
-static ULONG cpu_frequency_config(void)
+static ULONG cpu_frequency_config(BOOL precise)
 {
     refresh_cache_status();
     return ((ULONG)hw_info.cpu_type << 8) |
@@ -1357,19 +1515,46 @@ static ULONG cpu_frequency_config(void)
            (!!hw_info.dburst_enabled << 3) |
            (!!hw_info.copyback_enabled << 4) |
            (!!hw_info.super_scalar_enabled << 5) |
-           (!!hw_info.mmu_enabled << 6) |
-           (frequency_eclock_available() << 7);
+           (!!hw_info.mmu_present << 6) |
+           (precise << 7);
+}
+
+static ULONG begin_fpu_frequency(void)
+{
+    ULONG saved_fpcr;
+
+    /* FDIV.X still obeys FPCR's result precision. The external FPU
+     * calibration assumes extended precision and round-to-nearest;
+     * single/double precision add work on the 68881/68882.
+     */
+    __asm__ volatile("fmove.l fpcr,%0\n\t"
+                     "fmove.l #0,fpcr"
+                     : "=d"(saved_fpcr) : : "memory");
+    debug("    clock FPU: saved FPCR $%08lx, measuring with $00000000\n",
+          saved_fpcr);
+    return saved_fpcr;
+}
+
+static void end_fpu_frequency(ULONG saved_fpcr)
+{
+    __asm__ volatile("fmove.l %0,fpcr"
+                     : : "d"(saved_fpcr) : "memory");
 }
 
 void measure_processor_frequencies(void)
 {
     static ULONG previous_config, previous_mhz;
-    ULONG config = cpu_frequency_config();
+    BOOL precise = acquire_probe_clock();
+    ULONG config = cpu_frequency_config(precise);
     ULONG mhz;
+    BOOL cacheable;
 
     debug("  bench: calc cpu frequency...\n");
-    mhz = get_mhz_cpu();
-    if (cpu_frequency_config() != config) {
+    cacheable = frequency_code_cacheable();
+    mhz = cacheable ? get_mhz_cpu(precise) : 0;
+    if (!cacheable)
+        previous_mhz = 0;
+    if (cpu_frequency_config(precise) != config) {
         /* A setting changed during the measurement; neither result applies. */
         mhz = previous_mhz = 0;
         debug("    cpu_mhz: configuration changed during measurement\n");
@@ -1386,7 +1571,18 @@ void measure_processor_frequencies(void)
     }
     hw_info.cpu_mhz = mhz;
     debug("  bench: calc fpu frequency...\n");
-    hw_info.fpu_mhz = hw_info.fpu_enabled ? get_mhz_fpu() : 0;
+    if (hw_info.fpu_enabled &&
+        (hw_info.fpu_type == FPU_68881 || hw_info.fpu_type == FPU_68882)) {
+        ULONG saved_fpcr = begin_fpu_frequency();
+
+        /* Keep setup outside timed samples and restore on failure too. */
+        hw_info.fpu_mhz = get_mhz_fpu(precise);
+        end_fpu_frequency(saved_fpcr);
+    } else {
+        hw_info.fpu_mhz = hw_info.fpu_enabled ? get_mhz_fpu(precise) : 0;
+    }
+    if (precise)
+        release_probe_clock();
 }
 
 /*
@@ -1461,34 +1657,34 @@ void generate_comment(void)
 {
     const char *comment;
     if (bench_results.benchmarks_valid) {
-        comment = get_string(MSG_COMMENT_DEFAULT); // slower than a stock A500!
+        comment = get_builtin_string(MSG_COMMENT_DEFAULT); // slower than a stock A500!
 
         if (bench_results.dhrystones > 980) {
-            comment = get_string(MSG_COMMENT_CLASSIC);
+            comment = get_builtin_string(MSG_COMMENT_CLASSIC);
         }
         if (bench_results.dhrystones > 1300) {
-            comment = get_string(MSG_COMMENT_GOOD);
+            comment = get_builtin_string(MSG_COMMENT_GOOD);
         }
         if (bench_results.dhrystones > 2000) { // 68020@14 MHz should be here
-            comment = get_string(MSG_COMMENT_FAST);
+            comment = get_builtin_string(MSG_COMMENT_FAST);
         }
         if (bench_results.dhrystones > 7000) { // 68030@25 MHz should be here
-            comment = get_string(MSG_COMMENT_VERY_FAST);
+            comment = get_builtin_string(MSG_COMMENT_VERY_FAST);
         }
         if (bench_results.dhrystones > 30000) { // 68040@25 MHz should be here
-            comment = get_string(MSG_COMMENT_BLAZING);
+            comment = get_builtin_string(MSG_COMMENT_BLAZING);
         }
         if (bench_results.dhrystones > 80000) { // 68060@ 50 MHz should be here
-            comment = get_string(MSG_COMMENT_RIDICULOUS);
+            comment = get_builtin_string(MSG_COMMENT_RIDICULOUS);
         }
         if (bench_results.dhrystones > 130000) { // 68060>75Mhz should be here
-            comment = get_string(MSG_COMMENT_LUDICROUS);
+            comment = get_builtin_string(MSG_COMMENT_LUDICROUS);
         }
         if (bench_results.dhrystones > 200000) { // this is more than a 68060@100MHz -> "new CPU"
-            comment = get_string(MSG_COMMENT_WARP11);
+            comment = get_builtin_string(MSG_COMMENT_WARP11);
         }
     } else {
-        comment = get_string(MSG_NA);
+        comment = get_builtin_string(MSG_NA);
     }
 
     copy_string(hw_info.comment, comment, sizeof(hw_info.comment));

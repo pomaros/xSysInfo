@@ -21,8 +21,16 @@ jobs:
     - name: Mark git directory as safe
       run: git config --global --add safe.directory '*'
 
+    - name: Install native packer build dependencies
+      run: apt-get update && apt-get install -y cmake
+
     - name: Building all targets
-      run: make all
+      run: make all identify-release
+
+    - name: Check incremental frontend selection
+      run: |
+        make MUI=0 xSysInfo
+        make MUI=1 xSysInfo
 
     - name: Archive CI artifacts
       uses: actions/upload-artifact@v4
@@ -49,3 +57,10 @@ jobs:
       with:
           name: ${{ steps.lha.outputs.filename }}
           path: ${{ github.workspace }}/${{ steps.lha.outputs.filename }}
+
+    - name: Archive CI artifacts (Identify)
+      uses: actions/upload-artifact@v4
+      with:
+          name: Identify
+          path: build/identify-release/release/Identify*.lha
+          if-no-files-found: error

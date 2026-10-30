@@ -104,8 +104,9 @@ typedef struct {
 
 /* Drive list */
 typedef struct {
-    DriveInfo drives[MAX_DRIVES];
+    DriveInfo *drives;          /* Allocated to fit the drives */
     ULONG count;
+    ULONG capacity;
 } DriveList;
 
 /* Global drive list */
@@ -113,6 +114,7 @@ extern DriveList drive_list;
 
 /* Function prototypes */
 void enumerate_drives(void);
+void free_drive_list(void);
 void refresh_drive_info(ULONG index);
 ULONG measure_drive_speed(ULONG index);
 BOOL check_disk_present(ULONG index);
@@ -128,5 +130,8 @@ const char *get_disk_state_string(DiskState state);
 const char *get_filesystem_string(FilesystemType fs);
 FilesystemType identify_filesystem(ULONG dos_type);
 const char *drive_read_cmd_name(UWORD command);
+
+BOOL drive_has_media_evidence(const DriveInfo *drive);
+void format_drive_speed(const DriveInfo *drive, char *buffer, size_t size);
 
 #endif /* DRIVES_H */

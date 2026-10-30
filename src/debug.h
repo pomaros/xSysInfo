@@ -10,30 +10,21 @@
 
 #include <proto/dos.h>
 
-/* Global debug flag - set via /D command line switch */
+/* Set by the DEBUG command line option or Workbench tooltype. */
 extern BOOL g_debug_enabled;
 
-/* Debug output macro - only prints if debugging is enabled */
+BOOL init_debug_output(BOOL workbench);
+void cleanup_debug_output(void);
+void debug_printf(const char *fmt, ...);
 
-#ifdef __KICK13__
-    #define debug(fmt, ...) \
-        do { \
-            if (g_debug_enabled) { \
-                printf((const char *)fmt, ##__VA_ARGS__); \
-            } \
-        } while (0)
+#define debug(fmt, ...) \
+    do { \
+        if (g_debug_enabled) \
+            debug_printf((const char *)(fmt), ##__VA_ARGS__); \
+    } while (0)
 
-    #define Printf(fmt, ...) \
-        do { \
-            printf((const char *)fmt, ##__VA_ARGS__); \
-        } while (0)
-#else
-    #define debug(fmt, ...) \
-        do { \
-            if (g_debug_enabled) { \
-                Printf((CONST_STRPTR)fmt, ##__VA_ARGS__); \
-            } \
-        } while (0)
-#endif /*__KICK13__*/
+/* These error messages must also work before the display is opened. */
+#undef Printf
+#define Printf(fmt, ...) debug_printf((const char *)(fmt), ##__VA_ARGS__)
 
 #endif /* DEBUG_H */

@@ -11,6 +11,9 @@
 
 #include <exec/execbase.h>
 #include <exec/memory.h>
+#include <devices/input.h>
+#include <devices/inputevent.h>
+#include <clib/alib_protos.h>
 #include <intuition/intuition.h>
 #include <intuition/intuitionbase.h>
 #include <intuition/screens.h>
@@ -31,19 +34,27 @@
 
 #include "xsysinfo.h"
 #include "gui.h"
+#include "font.h"
 #include "hardware.h"
 #include "wdprobe.h"
 #include "software.h"
 #include "memory.h"
 #include "boards.h"
 #include "drives.h"
+#include "scsi.h"
 #include "benchmark.h"
 #include "busclock.h"
 #include "clock.h"
 #include "print.h"
+#include "report_view.h"
 #include "which.h"
 #include "locale_str.h"
 #include "debug.h"
+#include "loading.h"
+#include "display.h"
+#ifdef XSYSINFO_MUI
+#include "mui_gui.h"
+#endif
 
 /* Amiga version string for the Version command */
 __attribute__((used))
@@ -77,19 +88,15 @@ static BOOL g_dark_mode = FALSE;
 
 /* Optional WD SCSI controller check, enabled only by SCSI. */
 static BOOL g_scsi_check = FALSE;
+static BOOL g_mui_mode = FALSE;
 
 /* Global application context */
 AppContext app_context;
-struct TextAttr Topaz8Font = {
-    (STRPTR)DEFAULT_FONT_NAME,
-    DEFAULT_FONT_HEIGHT,
-    FS_NORMAL,
-    FPF_ROMFONT
-};
+static LocaleStringID font_error = MSG_COUNT;
 AppContext *app = &app_context;
 
 /* Command line argument template */
-#define TEMPLATE "DEBUG/S,BRIEF/S,FULL/S,WHICH/S,DARK/S,SCSI/S"
+#define TEMPLATE "DEBUG/S,BRIEF/S,FULL/S,WHICH/S,DARK/S,SCSI/S,MUI/S,FONT/K"
 
 /* Argument array indices */
 enum {
@@ -99,6 +106,8 @@ enum {
     ARG_WHICH,
     ARG_DARK,
     ARG_SCSI,
+    ARG_MUI,
+    ARG_FONT,
     ARG_COUNT
 };
 
@@ -143,6 +152,7 @@ typedef CONST_STRPTR IconString;
 static BOOL open_libraries(const char *program_name);
 static void close_libraries(void);
 static BOOL open_display(void);
+static void center_mouse_pointer(void);
 static void close_display(void);
 static void main_loop(void);
 static void set_palette(void);
@@ -229,6 +239,16 @@ static BOOL parse_args(int argc, char **argv)
                 g_dark_mode = TRUE;
             else if (xstricmp(argv[i], "scsi") == 0)
                 g_scsi_check = TRUE;
+            else if (xstricmp(argv[i], "mui") == 0)
+                g_mui_mode = TRUE;
+            else if (xstricmp(argv[i], "font") == 0)
+                set_ui_font_option(i + 1 < argc ? argv[++i] : "");
+            else if ((argv[i][0] == 'F' || argv[i][0] == 'f') &&
+                     (argv[i][1] == 'O' || argv[i][1] == 'o') &&
+                     (argv[i][2] == 'N' || argv[i][2] == 'n') &&
+                     (argv[i][3] == 'T' || argv[i][3] == 't') &&
+                     argv[i][4] == '=')
+                set_ui_font_option(argv[i] + 5);
         }
     }
     return TRUE;
@@ -269,8 +289,14 @@ static void parse_tooltypes(void)
                 app->display_mode = DISPLAY_PAL;
             } else if (match_icon_toolvalue(value, ICON_STR("NTSC"))) {
                 app->display_mode = DISPLAY_NTSC;
+            } else if (match_icon_toolvalue(value, ICON_STR("MUI"))) {
+                g_mui_mode = TRUE;
             }
         }
+
+        value = find_icon_tooltype(tooltypes, ICON_STR("FONT"));
+        if (value)
+            set_ui_font_option((const char *)value);
 
         /* Check for DEBUG tooltype */
         if (find_icon_tooltype(tooltypes, ICON_STR("DEBUG"))) {
@@ -329,7 +355,6 @@ int main(int argc, char **argv)
 {
     int ret = RETURN_OK;
     const char *scsi_error = NULL;
-    debug(XSYSINFO_NAME ": Checking start...\n");
 
     /* Check if started from Workbench */
     if (argc == 0) {
@@ -337,6 +362,7 @@ int main(int argc, char **argv)
         wb_startup = (struct WBStartup *)argv;
     } else {
         /* Started from CLI - parse command line arguments */
+        init_debug_output(FALSE);
         parse_args(argc, argv);
     }
 
@@ -364,6 +390,15 @@ int main(int argc, char **argv)
     /* Parse tooltypes if started from Workbench */
     if (wb_startup) {
         parse_tooltypes();
+        if (!init_debug_output(TRUE)) {
+            struct IntuiText body = { 1, 0, JAM2, 0, 0, NULL,
+                (UBYTE *)"Cannot open RAM:xSysInfo.log", NULL };
+            struct IntuiText ok = { 1, 0, JAM2, 0, 0, NULL,
+                (UBYTE *)get_string(MSG_BTN_OK), NULL };
+
+            AutoRequest(NULL, &body, NULL, &ok, 0, 0, 420, 60);
+            ret = RETURN_WARN;
+        }
     }
 
     debug(XSYSINFO_NAME ": Detecting hardware...\n");
@@ -448,7 +483,7 @@ int main(int argc, char **argv)
 
         debug(XSYSINFO_NAME ": Exporting full report to CLI output...\n");
         flush_report_output(output);
-        if (!output || !export_to_handle(output)) {
+        if (!output || !export_report_to_handle(output, REPORT_FULL)) {
             Printf((CONST_STRPTR)"Failed to export report\n");
             ret = RETURN_FAIL;
         }
@@ -458,11 +493,22 @@ int main(int argc, char **argv)
         measure_processor_frequencies();
         debug(XSYSINFO_NAME ": Exporting WhichAmiga-compatible report...\n");
         flush_report_output(output);
-        if (!output || !export_which_compatible(output)) {
+        if (!output || !export_report_to_handle(output, REPORT_WHICH)) {
             Printf((CONST_STRPTR)"Failed to export WhichAmiga report\n");
             ret = RETURN_FAIL;
         }
     } else if (!g_brief_mode) {
+        if (g_mui_mode) {
+#ifdef XSYSINFO_MUI
+            debug(XSYSINFO_NAME ": Opening MUI interface...\n");
+            if (mui_gui_run(version_string, scsi_error))
+                goto cleanup;
+#else
+            debug(XSYSINFO_NAME ": MUI support is not included in this executable\n");
+#endif
+            debug(XSYSINFO_NAME ": Falling back to the classic interface\n");
+        }
+
         debug(XSYSINFO_NAME ": Opening display...\n");
         if (!open_display()) {
             Printf((CONST_STRPTR)"%s\n", (LONG)get_string(MSG_ERR_NO_WINDOW));
@@ -470,11 +516,30 @@ int main(int argc, char **argv)
             goto cleanup;
         }
 
-        debug(XSYSINFO_NAME ": Init buttons...\n");
-        init_buttons();
-
         debug(XSYSINFO_NAME ": Draw screen...\n");
         redraw_current_view();
+
+        display_ready(app->use_custom_screen ? app->screen : NULL);
+
+        if (app->use_custom_screen)
+            center_mouse_pointer();
+
+        if (font_error != MSG_COUNT) {
+            const char *message = get_string(font_error);
+            ret = RETURN_WARN;
+            if (wb_startup) {
+                struct IntuiText fallback = {1, 0, JAM2, 0, 12, NULL,
+                    (UBYTE *)get_string(MSG_FONT_FALLBACK), NULL};
+                struct IntuiText body = {1, 0, JAM2, 0, 0, NULL,
+                    (UBYTE *)message, &fallback};
+                struct IntuiText ok = {1, 0, JAM2, 0, 0, NULL,
+                    (UBYTE *)get_string(MSG_BTN_OK), NULL};
+                AutoRequest(app->window, &body, NULL, &ok, 0, 0, 420, 80);
+            } else {
+                Printf((CONST_STRPTR)"%s\n%s\n", (LONG)message,
+                       (LONG)get_string(MSG_FONT_FALLBACK));
+            }
+        }
 
         if (scsi_error) {
             show_status_overlay(scsi_error);
@@ -485,87 +550,28 @@ int main(int argc, char **argv)
         debug(XSYSINFO_NAME ": Start main loop...\n");
         main_loop();
     } else {
-        char buffer[16];
+        BPTR output = Output();
 
         run_benchmarks();
-
-        printf("CPU: %s MHz: ", hw_info.cpu_string);
-        if (hw_info.cpu_mhz > 0) {
-            format_scaled(buffer, sizeof(buffer), hw_info.cpu_mhz, TRUE);
-            printf("%s\n", buffer);
-        } else {
-            printf("%s\n", get_string(MSG_NA));
+        flush_report_output(output);
+        if (!export_report_to_handle(output, REPORT_BRIEF)) {
+            Printf((CONST_STRPTR)"Failed to export brief report\n");
+            ret = RETURN_FAIL;
         }
-
-        if (hw_info.ramsey_rev) {
-            if (hw_info.bus_mhz)
-                format_scaled(buffer, sizeof(buffer), hw_info.bus_mhz, TRUE);
-            else
-                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
-            printf("Motherboard bus MHz: %s\n", buffer);
-        }
-
-        printf("MMU: %s enabled: %s\n", hw_info.mmu_string,
-               hw_info.mmu_enabled ? get_string(MSG_YES) : get_string(MSG_NO));
-
-        printf("FPU: %s MHz: ", hw_info.fpu_string);
-        if (hw_info.fpu_mhz > 0) {
-            format_scaled(buffer, sizeof(buffer), hw_info.fpu_mhz, TRUE);
-            printf("%s\n", buffer);
-        } else {
-            printf("%s\n", get_string(MSG_NA));
-        }
-
-        printf("Dhrystones: ");
-        if (bench_results.benchmarks_valid)
-            printf("%lu\n", (unsigned long)bench_results.dhrystones);
-        else
-            printf("%s\n", get_string(MSG_NA));
-
-        printf("MIPS: ");
-        if (bench_results.benchmarks_valid) {
-            format_scaled(buffer, sizeof(buffer), bench_results.mips, TRUE);
-            printf("%s\n", buffer);
-        } else {
-            printf("%s\n", get_string(MSG_NA));
-        }
-
-        printf("MFLOPS: ");
-        if (hw_info.fpu_type != FPU_NONE && bench_results.benchmarks_valid
-            && hw_info.fpu_enabled) {
-            format_scaled(buffer, sizeof(buffer), bench_results.mflops, TRUE);
-            printf("%s\n", buffer);
-        } else {
-            printf("%s\n", get_string(MSG_NA));
-        }
-
-        if (bench_results.benchmarks_valid && bench_results.chip_speed > 0)
-            format_scaled(buffer, sizeof(buffer),
-                          bench_results.chip_speed / 10000, TRUE);
-        else
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_NA));
-        printf("Chip RAM speed: %s MB/s\n", buffer);
-
-        if (bench_results.benchmarks_valid && bench_results.fast_speed > 0)
-            format_scaled(buffer, sizeof(buffer),
-                          bench_results.fast_speed / 10000, TRUE);
-        else
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_NA));
-        printf("Fast RAM speed: %s MB/s\n", buffer);
-
-        if (bench_results.benchmarks_valid && bench_results.rom_speed > 0)
-            format_scaled(buffer, sizeof(buffer),
-                          bench_results.rom_speed / 10000, TRUE);
-        else
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_NA));
-        printf("ROM speed: %s MB/s\n", buffer);
     }
 
 cleanup:
     cleanup_timer();
+    close_report_view();
     close_display();
+    free_software_lists();
+    free_board_list();
+    free_memory_regions();
+    free_drive_list();
+    free_scsi_device_list();
     close_libraries();
     cleanup_locale();
+    cleanup_debug_output();
 
     return ret;
 }
@@ -719,17 +725,115 @@ static BOOL is_rtg_mode(struct Screen *screen)
     return FALSE;
 }
 
-/*
- * Open display - either a window on Workbench or a custom screen
- */
+/* Check Workbench, or else the default public screen, without opening it.
+ * LockPubScreen() would open a closed Workbench, which takes about 44 KB of
+ * Chip RAM on a floppy boot. *found tells whether either screen was open. */
+static BOOL open_pub_screen_is_rtg(BOOL *found)
+{
+    UBYTE default_name[MAXPUBSCREENNAME + 1];
+    const char *names[2] = { "Workbench", (const char *)default_name };
+    struct List *list;
+    struct Node *node;
+    BOOL rtg = FALSE;
+    int i;
+
+    *found = FALSE;
+    GetDefaultPubScreen(default_name);
+    list = LockPubScreenList();
+    for (i = 0; i < 2; i++) {
+        for (node = list->lh_Head; node->ln_Succ; node = node->ln_Succ) {
+            struct PubScreenNode *pub = (struct PubScreenNode *)node;
+
+            if (node->ln_Name && !strcmp(node->ln_Name, names[i]) &&
+                pub->psn_Screen) {
+                rtg = is_rtg_mode(pub->psn_Screen);
+                *found = TRUE;
+                break;
+            }
+        }
+        if (node->ln_Succ)
+            break;
+    }
+    UnlockPubScreenList();
+    return rtg;
+}
+
+/* Picasso96 and CyberGraphX load these before Workbench opens. */
+static BOOL rtg_system_loaded(void)
+{
+    BOOL loaded;
+
+    Forbid();
+    loaded = FindName(&SysBase->LibList, (CONST_STRPTR)"rtg.library") ||
+             FindName(&SysBase->LibList,
+                      (CONST_STRPTR)"cybergraphics.library");
+    Permit();
+    return loaded;
+}
+
+/* Move away from the fullscreen close corner once the display is ready. */
+static void center_mouse_pointer(void)
+{
+    struct MsgPort *port = CreatePort(NULL, 0);
+    struct IOStdReq *io;
+    struct InputEvent event;
+    struct IEPointerPixel position;
+    struct Screen *screen = app->screen;
+
+    if (!port) return;
+    io = CreateStdIO(port);
+    if (io) {
+        if (OpenDevice((CONST_STRPTR)"input.device", 0, (struct IORequest *)io, 0) == 0) {
+            memset(&event, 0, sizeof(event));
+            event.ie_Code = IECODE_NOBUTTON;
+            if (IntuitionBase->LibNode.lib_Version >= 36) {
+                position.iepp_Screen = screen;
+                position.iepp_Position.X = screen->Width / 2;
+                position.iepp_Position.Y = screen->Height / 2;
+                event.ie_Class = IECLASS_NEWPOINTERPOS;
+                event.ie_SubClass = IESUBCLASS_PIXEL;
+                event.ie_EventAddress = &position;
+            } else {
+                /* The old event uses low-resolution, non-interlaced coordinates. */
+                event.ie_Class = IECLASS_POINTERPOS;
+                event.ie_X = (screen->LeftEdge + screen->Width / 2) /
+                             ((screen->ViewPort.Modes & HIRES) ? 2 : 1);
+                event.ie_Y = (screen->TopEdge + screen->Height / 2) /
+                             ((screen->ViewPort.Modes & LACE) ? 2 : 1);
+            }
+            io->io_Command = IND_WRITEEVENT;
+            io->io_Data = &event;
+            io->io_Length = sizeof(event);
+            DoIO((struct IORequest *)io);
+            CloseDevice((struct IORequest *)io);
+        }
+        DeleteStdIO(io);
+    }
+    DeletePort(port);
+}
+
+/* Open a window on Workbench or a custom screen. */
 static BOOL open_display(void)
 {
     struct NewScreen *newScreen;
     struct NewWindow *newWindow;
-    struct Screen *wb_screen;
+    struct TextAttr display_font;
     BOOL use_window = FALSE;
     BOOL has_v36_intuition = (IntuitionBase->LibNode.lib_Version >= 36);
+    BOOL loader_running;
     ULONG display_id = HIRES_KEY;
+
+    app->tf = open_ui_font(&font_error);
+    if (!app->tf)
+        return FALSE;
+    display_font.ta_Name = (STRPTR)app->tf->tf_Message.mn_Node.ln_Name;
+    display_font.ta_YSize = app->tf->tf_YSize;
+    display_font.ta_Style = app->tf->tf_Style;
+    display_font.ta_Flags = app->tf->tf_Flags;
+
+    Forbid();
+    loader_running = FindTask((CONST_STRPTR)LOADING_TASK_NAME) != NULL;
+    Permit();
 
     /* Check display mode setting from tooltypes */
     if (app->display_mode == DISPLAY_WINDOW) {
@@ -741,14 +845,21 @@ static BOOL open_display(void)
     } else {
         /* AUTO mode - detect based on RTG */
         if (has_v36_intuition) {
-            wb_screen = LockPubScreen((CONST_STRPTR)"Workbench");
-            if (!wb_screen) {
-                wb_screen = LockPubScreen(NULL);  /* Default public screen */
-            }
+            BOOL found;
 
-            if (wb_screen) {
-                use_window = is_rtg_mode(wb_screen);
-                UnlockPubScreen(NULL, wb_screen);
+            use_window = open_pub_screen_is_rtg(&found);
+            /* A closed Workbench on an RTG system will open there, so open
+             * it to check, as before. Native systems keep the Chip RAM. */
+            if (!found && rtg_system_loaded()) {
+                struct Screen *wb_screen =
+                    LockPubScreen((CONST_STRPTR)"Workbench");
+
+                if (!wb_screen)
+                    wb_screen = LockPubScreen(NULL);
+                if (wb_screen) {
+                    use_window = is_rtg_mode(wb_screen);
+                    UnlockPubScreen(NULL, wb_screen);
+                }
             }
         } else if (wb_startup) {
             /* Get a copy of Workbench screen to check its mode */
@@ -828,15 +939,6 @@ static BOOL open_display(void)
                              app->window->BorderTop -
                              app->window->BorderBottom;
 
-        /* If default screen font is larger than Topaz8, switch to Topaz8 */
-        if (app->window->IFont->tf_YSize > Topaz8Font.ta_YSize)
-        {
-            app->tf = OpenFont(&Topaz8Font);
-            if (app->tf)
-            {
-                SetFont(app->rp, app->tf);
-            }
-        }
     } else {
         debug(XSYSINFO_NAME " open_display: opening screen, mode ID $%08lx\n",
               display_id);
@@ -853,10 +955,11 @@ static BOOL open_display(void)
                 SA_Depth, SCREEN_DEPTH,
                 SA_Title, (ULONG)XSYSINFO_NAME " " XSYSINFO_VERSION,
                 SA_Type, CUSTOMSCREEN,
-                SA_Font, (ULONG)&Topaz8Font,
+                SA_Font, (ULONG)&display_font,
                 SA_DisplayID, display_id,
                 SA_Pens, (ULONG)default_pens,
                 SA_ShowTitle, FALSE,
+                SA_Behind, loader_running,
                 TAG_DONE);
         } else {
             newScreen = (struct NewScreen *)AllocMem(sizeof(struct NewScreen), MEMF_ANY | MEMF_CLEAR);
@@ -865,8 +968,9 @@ static BOOL open_display(void)
                 newScreen->Height = app->screen_height;
                 newScreen->Depth = SCREEN_DEPTH;
                 newScreen->DefaultTitle = (UBYTE *)(XSYSINFO_NAME " " XSYSINFO_VERSION);
-                newScreen->Type = CUSTOMSCREEN;
-                newScreen->Font = &Topaz8Font;
+                newScreen->Type = CUSTOMSCREEN |
+                                  (loader_running ? SCREENBEHIND : 0);
+                newScreen->Font = &display_font;
                 newScreen->ViewModes = HIRES;
                 app->screen = OpenScreen(newScreen);
                 if (app->screen) {
@@ -884,33 +988,20 @@ static BOOL open_display(void)
         /* Set our palette */
         set_palette();
 
-        /* Open borderless window on our screen */
-        if (has_v36_intuition) {
-            app->window = OpenWindowTags(NULL,
-                WA_CustomScreen, (ULONG)app->screen,
-                WA_Left, 0,
-                WA_Top, 0,
-                WA_Width, SCREEN_WIDTH,
-                WA_Height, app->screen_height,
-                WA_IDCMP, IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY | IDCMP_REFRESHWINDOW |
-                          IDCMP_MOUSEMOVE | IDCMP_RAWKEY,
-                WA_Flags, WFLG_BORDERLESS | WFLG_ACTIVATE | WFLG_BACKDROP |
-                          WFLG_RMBTRAP | WFLG_SMART_REFRESH | WFLG_REPORTMOUSE,
-                TAG_DONE);
-        } else {
-            newWindow = (struct NewWindow *)AllocMem(sizeof(struct NewWindow), MEMF_ANY | MEMF_CLEAR);
-            if (newWindow) {
-                newWindow->Type = CUSTOMSCREEN;
-                newWindow->Width = SCREEN_WIDTH;
-                newWindow->Height = app->screen_height;
-                newWindow->IDCMPFlags = IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY | IDCMP_REFRESHWINDOW |
-                            IDCMP_MOUSEMOVE | IDCMP_RAWKEY;
-                newWindow->Flags = WFLG_BORDERLESS | WFLG_ACTIVATE | WFLG_BACKDROP |
-                            WFLG_RMBTRAP | WFLG_SMART_REFRESH | WFLG_REPORTMOUSE;
-                newWindow->Screen = app->screen;
-                app->window = OpenWindow(newWindow);
-                FreeMem(newWindow, sizeof(struct NewWindow));
-            }
+        /* This window needs no attributes beyond the V34 NewWindow ABI. */
+        {
+            struct NewWindow window = { 0 };
+
+            window.Type = CUSTOMSCREEN;
+            window.Width = SCREEN_WIDTH;
+            window.Height = app->screen_height;
+            window.IDCMPFlags = IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY |
+                                IDCMP_REFRESHWINDOW | IDCMP_MOUSEMOVE |
+                                IDCMP_RAWKEY;
+            window.Flags = WFLG_BORDERLESS | WFLG_ACTIVATE | WFLG_BACKDROP |
+                           WFLG_RMBTRAP | WFLG_SMART_REFRESH | WFLG_REPORTMOUSE;
+            window.Screen = app->screen;
+            app->window = OpenWindow(&window);
         }
 
         if (!app->window) {
@@ -921,6 +1012,11 @@ static BOOL open_display(void)
 
         app->rp = app->window->RPort;
     }
+    if (!init_drawing())
+        return FALSE;
+
+    /* Always use the validated font, including on a public screen. */
+    SetFont(app->rp, app->tf);
     debug(XSYSINFO_NAME " open_display: allocating pens\n");
 
     /* Allocate/map pens for drawing */
@@ -972,13 +1068,10 @@ static void CloseWindowSafely(struct Window *win)
  */
 static void close_display(void)
 {
+    cleanup_drawing();
+
     /* Release any allocated pens before closing */
     release_pens();
-
-    if (app->tf) {
-        CloseFont(app->tf);
-        app->tf = NULL;
-    }
 
     if (app->window) {
         CloseWindowSafely(app->window);
@@ -995,6 +1088,10 @@ static void close_display(void)
     }
 
     app->rp = NULL;
+    if (app->tf) {
+        CloseFont(app->tf);
+        app->tf = NULL;
+    }
 }
 
 /*
@@ -1176,6 +1273,7 @@ static void main_loop(void)
 
             ULONG class = msg->Class;
             UWORD code = msg->Code;
+            UWORD qualifier = msg->Qualifier;
             WORD mx = msg->MouseX;
             WORD my = msg->MouseY;
 
@@ -1204,7 +1302,7 @@ static void main_loop(void)
 
                         ButtonID btn = handle_click(mx, my);
                         if (btn != BTN_NONE) {
-                            if (btn == BTN_SOFTWARE_SCROLLBAR) {
+                            if (btn == BTN_SOFTWARE_SCROLLBAR || btn == BTN_REPORT_SCROLLBAR) {
                                 app->scrollbar_dragging = FALSE;
                                 handle_scrollbar_click(mx, my);
                             } else {
@@ -1244,12 +1342,31 @@ static void main_loop(void)
                     }
                     break;
 
+                case IDCMP_RAWKEY:
+                    if (code & IECODE_UP_PREFIX)
+                        break;
+                    if (app->current_view == VIEW_REPORT) {
+                        report_view_key(code, qualifier);
+                    } else if (code == 0x7a || code == 0x7b) {
+                        /* NewMouse wheel: scroll lists one row per notch. */
+                        BOOL down = code == 0x7b;
+                        if (app->current_view == VIEW_MAIN)
+                            handle_button_press(down ? BTN_SOFTWARE_DOWN : BTN_SOFTWARE_UP);
+                        else if (app->current_view == VIEW_BOARDS)
+                            handle_button_press(down ? BTN_BOARD_NEXT : BTN_BOARD_PREV);
+                    }
+                    break;
+
                 case IDCMP_VANILLAKEY:
+                    if (app->current_view == VIEW_REPORT &&
+                        (code == 's' || code == 'S')) {
+                        report_view_handle_button(BTN_REPORT_SAVE);
+                        break;
+                    }
                     /* Handle keyboard shortcuts */
                     switch (code) {
                         case 'q':
                         case 'Q':
-                        case 0x1B:  /* Escape */
                             if (app->current_view == VIEW_MAIN) {
                                 app->running = FALSE;
                             } else {
@@ -1283,7 +1400,7 @@ static void main_loop(void)
                         case 'p':
                         case 'P':
                             if (app->current_view == VIEW_MAIN) {
-                                handle_button_press(BTN_PRINT);
+                                handle_button_press(BTN_REPORT);
                             }
                             break;
                     }
@@ -1340,17 +1457,8 @@ const char *get_location_string(MemoryLocation loc)
         case LOC_24BIT_RAM: return "24BitRAM";
         case LOC_32BIT_RAM: return "32BitRAM";
         case LOC_KICKSTART:
-            /* Return ROM size string (e.g., "256K" or "512K") */
-            /* kickstart_size is in KB from identify.library */
-            if (hw_info.kickstart_size >= 1024) {
-                /* Size is in bytes, convert to KB */
-                snprintf(kickstart_size_str, sizeof(kickstart_size_str),
-                         " (%luK) ", (unsigned long)(hw_info.kickstart_size / 1024));
-            } else {
-                /* Size is already in KB */
-                snprintf(kickstart_size_str, sizeof(kickstart_size_str),
-                         " (%luK) ", (unsigned long)hw_info.kickstart_size);
-            }
+            snprintf(kickstart_size_str, sizeof(kickstart_size_str),
+                     " (%luK) ", (unsigned long)hw_info.kickstart_size);
             return kickstart_size_str;
         default:            return " (\?\?\?) ";
     }

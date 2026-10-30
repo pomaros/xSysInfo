@@ -20,12 +20,17 @@ typedef struct {
     APTR address;
     UWORD version;
     UWORD revision;
+    /* A line built from a catalog string: its id plus one (0 for none) and
+     * number, so a report can build it again in English. */
+    UWORD text_id;
+    ULONG text_arg;
 } SoftwareEntry;
 
-/* Software list */
+/* Software list, allocated to fit its entries */
 typedef struct {
-    SoftwareEntry entries[MAX_SOFTWARE_ENTRIES];
+    SoftwareEntry *entries;
     ULONG count;
+    ULONG capacity;
 } SoftwareList;
 
 /* System software collected once alongside the software lists. */
@@ -34,6 +39,8 @@ typedef struct {
     char os_name[48];
     ULONG graphics_system_id;  /* IDGOS_* */
     char graphics_system[32];
+    char network_stack[48];    /* empty when no stack was found */
+    BOOL network_not_running;  /* installed in LIBS:, but not loaded */
     BOOL has_workbench_version;
     UWORD workbench_version;
     UWORD workbench_revision;
@@ -58,6 +65,7 @@ void enumerate_libraries(void);
 void enumerate_devices(void);
 void enumerate_resources(void);
 void enumerate_mmu_entries(void);
+void free_software_lists(void);
 void enumerate_all_software(void);
 void detect_system_software(void);
 
@@ -66,5 +74,9 @@ SoftwareList *get_software_list(SoftwareType type);
 
 /* Sort entries alphabetically by name */
 void sort_software_list(SoftwareList *list);
+
+/* The entry's text in the current language; see SoftwareEntry.text_id. */
+const char *software_entry_text(const SoftwareEntry *entry, char *buffer,
+                                size_t size);
 
 #endif /* SOFTWARE_H */

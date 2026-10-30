@@ -3,6 +3,12 @@
 
 /*
  * xSysInfo - GUI rendering and event handling
+ *
+ * Text() takes a 16-bit count in d0, and ROM graphics.library ignores the
+ * upper half of the register. AfA_OS 4.8 (used by AmiKit) patches Text()
+ * and tests the whole register, skipping the call when it looks negative.
+ * Pass the count zero-extended in d0. The current NDK inlines do this; an
+ * older inline style that set only the low word made text vanish (#29).
  */
 
 #include <string.h>
@@ -24,6 +30,7 @@
 
 #include "xsysinfo.h"
 #include "gui.h"
+#include "format.h"
 #include "hardware.h"
 #include "wdprobe.h"
 #include "benchmark.h"
@@ -31,8 +38,10 @@
 #include "memory.h"
 #include "drives.h"
 #include "boards.h"
+#include "boards_detail.h"
 #include "scsi.h"
 #include "print.h"
+#include "report_view.h"
 #include "cache.h"
 #include "clock.h"
 #include "locale_str.h"
@@ -55,16 +64,19 @@ extern struct GfxBase *GfxBase;
 Button buttons[MAX_BUTTONS];
 int num_buttons = 0;
 
-/* Static buffers for cache button labels (name + ON/OFF/N/A status) */
-static char icache_label[16], dcache_label[16], iburst_label[16];
-static char dburst_label[16], cback_label[16], super_scalar_label[16];
+#define MAX_HARDWARE_ROWS MAX_HARDWARE_INFO_ROWS
+typedef struct {
+    const char *label;
+    char value[80];
+    WORD indent, offset, height, top, y, page, group;
+    BOOL has_value;
+    ButtonID control;
+} HardwareRow;
+static HardwareRow hardware_rows[MAX_HARDWARE_ROWS];
+static WORD hardware_row_count, hardware_page, hardware_pages;
 
 #define CACHE_BTN_X (HARDWARE_PANEL_X + 226)
 #define CACHE_BTN_W 32
-#define CACHE_BTN_H 11
-#define CACHE_ROW_Y0 (HARDWARE_PANEL_Y + 84)
-#define CACHE_LABEL_Y0 (CACHE_ROW_Y0 + 8)
-#define CACHE_ROW_STEP 11
 #define HARDWARE_OVERVIEW_VALUE_OFFSET 90
 #define HARDWARE_CHIPSET_VALUE_OFFSET 124
 #define PANEL_CYCLE_MARGIN 2
@@ -123,80 +135,281 @@ static void draw_bottom_buttons(void);
 static void draw_cache_buttons(void);
 static void clear_buttons(void);
 static void update_software_list(BOOL clear_content);
+static ULONG software_row_count(void);
+static BOOL software_panel_scrolls(void);
 static void update_hardware_text(void);
 static void refresh_all_cache_buttons(void);
-static void show_timed_overlay(const char *message, ULONG ticks);
 static void show_status_overlay_centered(const char *message,
                                          WORD area_x, WORD area_y,
                                          WORD area_w, WORD area_h);
 static void show_speed_status_overlay(const char *message);
 static const char *get_hardware_page_label(void);
-static void update_cache_button_enabled_states(void);
 static void refresh_hardware_benchmark_rows(void);
-static void format_cpu_value(char *buffer, size_t size);
-static void format_fpu_value(char *buffer, size_t size);
-static void format_mmu_value(char *buffer, size_t size);
-static void format_mmu_address(char *buffer, size_t size, ULONG address);
+static void build_hardware_rows(void);
+static void invalidate_hardware_rows(void);
+static void add_hardware_buttons(void);
 
-void format_scaled(char *buffer, size_t size, ULONG value_x100, BOOL round)
+/* Shared by gradients, the logo, and TightText's ink/coverage planes.
+ * UI fonts are validated by open_ui_font(): at most eight pixels high. */
+#define DRAWING_TEMPLATE_SIZE (((SCREEN_WIDTH + 30) / 16) * 2 * 16)
+#define TEXT_TEMPLATE_WORDS ((SCREEN_WIDTH + 15) / 16)
+static UWORD *drawing_template;
+
+/* Compose the validated UI bitmap font, preserving skipped spaces and
+ * per-character overwrite order. Two masks also retain JAM1/COMPLEMENT. */
+static WORD draw_tight_text(struct RastPort *rp, int x, int y,
+                            CONST_STRPTR str, int charGap, int spaceWidth,
+                            int right_edge, BOOL erase_spaces)
 {
-    ULONG integer_part = value_x100 / 100;
-    ULONG frac_part = value_x100 % 100;
-    if (round && integer_part >= 100) {
-        /* Round up if fractional part >= 0.5 */
-        if (frac_part >= 50) {
-            integer_part++;
-        }
-        snprintf(buffer, size, "%lu", (unsigned long)integer_part);
-    } else {
-        snprintf(buffer, size, "%lu.%02lu",
-                 (unsigned long)integer_part,
-                 (unsigned long)frac_part);
-    }
-}
+    const struct TextFont *font = rp->Font;
+    const ULONG *locations = font->tf_CharLoc;
+    const WORD *kerning = font->tf_CharKern;
+    UWORD *ink = drawing_template;
+    UWORD *coverage = ink + TEXT_TEMPLATE_WORDS * font->tf_YSize;
+    UBYTE mode = rp->DrawMode;
+    UBYTE pen = rp->FgPen;
+    int currentX = x, finalX = x;
+    int targetWidth = charGap < 0 ? 8 + charGap : 0;
+    int left = SCREEN_WIDTH, right = 0;
+    int space = TextLength(rp, (CONST_STRPTR)" ", 1);
 
-void TightText(struct RastPort *rp, int x, int y, CONST_STRPTR str, int charGap, int spaceWidth)
-{
-    int currentX = x;
-    int targetWidth = 0;
+    if (spaceWidth > space) spaceWidth = space;
+    memset(ink, 0, TEXT_TEMPLATE_WORDS * sizeof(UWORD) * font->tf_YSize * 2);
 
-    /*
-     * Negative gaps were tuned around Topaz 8. Treat them as target
-     * advances from that font and leave already-narrow fonts alone.
-     */
-    if (charGap < 0)
-        targetWidth = 8 + charGap;
+    for (; *str; str++) {
+        unsigned ch = (UBYTE)*str, index;
+        ULONG location;
+        int advance, gap = charGap, kern, width, extent, row;
+        const UBYTE *glyph;
 
-    Move(rp, x, y);
-
-    for (int i = 0; str[i]; i++) {
-        if (str[i] == ' ') {
+        if (ch == ' ' && !erase_spaces) {
             currentX += spaceWidth;
-        } else {
-            int charWidth = TextLength(rp, &str[i], 1);
-            int effectiveGap = charGap;
-
-            if (targetWidth > 0) {
-                if (charWidth <= targetWidth)
-                    effectiveGap = 0;
-                else
-                    effectiveGap = targetWidth - charWidth;
-            }
-
-            Move(rp, currentX, y);
-            Text(rp, &str[i], 1);
-            currentX += charWidth + effectiveGap;
+            continue;
         }
+        advance = TextLength(rp, str, 1);
+        if (right_edge >= 0 && currentX + advance > right_edge)
+            break;
+        if (targetWidth > 0)
+            gap = advance > targetWidth ? targetWidth - advance : 0;
+        index = ch >= font->tf_LoChar && ch <= font->tf_HiChar ?
+                ch - font->tf_LoChar : font->tf_HiChar - font->tf_LoChar + 1U;
+        location = locations[index];
+        kern = kerning ? kerning[index] : 0;
+        width = location & 0xffff;
+        glyph = (const UBYTE *)font->tf_CharData + (location >> 19);
+        if (ch == ' ' && erase_spaces) {
+            width = kern = gap = 0;
+        }
+        extent = advance;
+        /* V34 Text clips ink extending past its final pen position. */
+        if (GfxBase->LibNode.lib_Version >= 36 && kern + width > extent)
+            extent = kern + width;
+
+        {
+            int first = currentX < 0 ? -currentX : 0;
+            int last = currentX + extent > SCREEN_WIDTH ? SCREEN_WIDTH - currentX : extent;
+            int glyphFirst = first > kern ? first : kern;
+            int glyphLast = last < kern + width ? last : kern + width;
+            int dest = currentX + first;
+            ULONG cell, keep, invert;
+            ULONG *out, *covered;
+            unsigned sourceBit = 0, sourceShift = 0, destShift = 0;
+            ULONG sourceMask = 0;
+            BOOL crossesByte = FALSE;
+
+            if (last > first) {
+                cell = ((1UL << (last - first)) - 1) << (32 - (dest & 15) - (last - first));
+                keep = mode & JAM2 ? ~cell : ~0UL;
+                invert = mode & INVERSVID ? cell : 0;
+                /* A glyph spans at most two words. The shared allocation
+                 * includes a spare word beyond the final coverage row. */
+                out = (ULONG *)(ink + (dest >> 4));
+                covered = (ULONG *)(coverage + (dest >> 4));
+                if (glyphLast > glyphFirst) {
+                    sourceBit = (location >> 16) + glyphFirst - kern;
+                    glyph = (const UBYTE *)font->tf_CharData + (sourceBit >> 3);
+                    sourceShift = 16 - (sourceBit & 7) - (glyphLast - glyphFirst);
+                    sourceMask = (1UL << (glyphLast - glyphFirst)) - 1;
+                    crossesByte = (sourceBit & 7) + glyphLast - glyphFirst > 8;
+                    destShift = 32 - (dest & 15) - (glyphLast - first);
+                }
+                if (dest < left) left = dest;
+                if (currentX + last > right) right = currentX + last;
+                for (row = 0; row < font->tf_YSize; row++) {
+                    ULONG bits = 0;
+                    if (glyphLast > glyphFirst) {
+                        bits = (UWORD)glyph[0] << 8;
+                        if (crossesByte) bits |= glyph[1];
+                        bits = ((bits >> sourceShift) & sourceMask) << destShift;
+                        glyph += font->tf_Modulo;
+                    }
+                    bits ^= invert;
+                    *covered |= cell;
+                    if (mode & COMPLEMENT) *out ^= bits;
+                    else *out = (*out & keep) | bits;
+                    out = (ULONG *)((UWORD *)out + TEXT_TEMPLATE_WORDS);
+                    covered = (ULONG *)((UWORD *)covered + TEXT_TEMPLATE_WORDS);
+                }
+            }
+        }
+        finalX = currentX + advance;
+        currentX += advance + gap;
     }
+
+    if (right > left) {
+        WORD offset = left >> 4;
+        WORD top = y - font->tf_Baseline;
+
+        /* Coverage leaves spaces untouched. Replacing covered ink above
+         * reproduces the original per-character JAM2 overlap order. */
+        SetDrMd(rp, mode & COMPLEMENT ? COMPLEMENT : JAM1);
+        if ((mode & JAM2) && !(mode & COMPLEMENT)) {
+            SetAPen(rp, rp->BgPen);
+            BltTemplate(coverage + offset, left & 15, TEXT_TEMPLATE_WORDS * 2,
+                        rp, left, top, right - left, font->tf_YSize);
+            SetAPen(rp, pen);
+        }
+        BltTemplate(ink + offset, left & 15, TEXT_TEMPLATE_WORDS * 2,
+                    rp, left, top, right - left, font->tf_YSize);
+        WaitBlit();
+        SetDrMd(rp, mode);
+    }
+    Move(rp, finalX, y);
+    return finalX;
 }
 
-/*
- * Initialize buttons for current view
- */
-void init_buttons(void)
+/* TightText() lets the ROM's Text() compose the line through a copy of the
+ * UI font whose advances are squeezed to the tight width. The copy shares
+ * the glyph data and kerning and only adds an advance table. Composing
+ * every glyph row in C costs several times as much on a 68000. One copy
+ * per space width covers the labels and the speed factors. */
+#define TIGHT_FONTS 2
+
+struct TightFont {
+    const struct TextFont *base;
+    WORD target;
+    WORD space;
+    UWORD entries;
+    WORD *advances;
+    struct TextFont font;
+};
+
+static struct TightFont tight_fonts[TIGHT_FONTS];
+/* Text() reads kerning for every proportional font. */
+static WORD *zero_kerning;
+static UWORD zero_kerning_entries;
+
+static struct TextFont *get_tight_font(struct RastPort *rp, int target,
+                                       int space)
 {
-    clear_buttons();
-    update_button_states();
+    const struct TextFont *base = rp->Font;
+    const WORD *kerning = base->tf_CharKern;
+    BOOL proportional = (base->tf_Flags & FPF_PROPORTIONAL) &&
+                        base->tf_CharSpace;
+    struct TightFont *slot = NULL;
+    UWORD entries, i;
+    int n;
+
+    /* Only plain bitmap fonts have nothing beyond the TextFont header,
+     * and Text() would apply soft styles and spacing that TightText
+     * never did. */
+    if ((base->tf_Style & ~(FSF_UNDERLINED | FSF_BOLD | FSF_ITALIC |
+                            FSF_EXTENDED)) ||
+        rp->AlgoStyle || rp->TxSpacing)
+        return NULL;
+
+    for (n = 0; n < TIGHT_FONTS; n++) {
+        struct TightFont *tight = &tight_fonts[n];
+
+        if (tight->base == base && tight->target == target &&
+            tight->space == space)
+            return &tight->font;
+        if (!tight->base && !slot)
+            slot = tight;
+    }
+    if (!slot)
+        return NULL;
+
+    /* The last entry is the glyph for characters outside the font. */
+    entries = base->tf_HiChar - base->tf_LoChar + 2;
+    if (!kerning) {
+        if (!zero_kerning) {
+            zero_kerning = AllocMem(entries * sizeof(WORD),
+                                    MEMF_ANY | MEMF_CLEAR);
+            if (!zero_kerning)
+                return NULL;
+            zero_kerning_entries = entries;
+        }
+        if (zero_kerning_entries < entries)
+            return NULL;
+        kerning = zero_kerning;
+    }
+    slot->advances = AllocMem(entries * sizeof(WORD), MEMF_ANY);
+    if (!slot->advances)
+        return NULL;
+
+    for (i = 0; i < entries; i++) {
+        WORD advance = proportional ?
+                       kerning[i] + ((WORD *)base->tf_CharSpace)[i] :
+                       base->tf_XSize;
+
+        if (i + base->tf_LoChar == ' ')
+            advance = space;
+        else if (advance > target)
+            advance = target;
+        /* Text() moves by kerning plus space. */
+        slot->advances[i] = advance - kerning[i];
+    }
+
+    slot->font = *base;
+    slot->font.tf_Message.mn_ReplyPort = NULL;  /* no TextFontExtension */
+    slot->font.tf_Flags |= FPF_PROPORTIONAL;
+    slot->font.tf_CharSpace = slot->advances;
+    slot->font.tf_CharKern = (APTR)kerning;
+    slot->base = base;
+    slot->target = target;
+    slot->space = space;
+    slot->entries = entries;
+    return &slot->font;
+}
+
+static void free_tight_fonts(void)
+{
+    int n;
+
+    for (n = 0; n < TIGHT_FONTS; n++) {
+        if (tight_fonts[n].advances)
+            FreeMem(tight_fonts[n].advances,
+                    tight_fonts[n].entries * sizeof(WORD));
+    }
+    memset(tight_fonts, 0, sizeof(tight_fonts));
+    if (zero_kerning)
+        FreeMem(zero_kerning, zero_kerning_entries * sizeof(WORD));
+    zero_kerning = NULL;
+    zero_kerning_entries = 0;
+}
+
+void TightText(struct RastPort *rp, int x, int y, CONST_STRPTR str,
+               int charGap, int spaceWidth)
+{
+    struct TextFont *base = rp->Font;
+    struct TextFont *tight = NULL;
+    UBYTE mode = rp->DrawMode;
+    int space = TextLength(rp, (CONST_STRPTR)" ", 1);
+
+    if (spaceWidth > space)
+        spaceWidth = space;
+    if (charGap < 0 && !(mode & (COMPLEMENT | INVERSVID)))
+        tight = get_tight_font(rp, 8 + charGap, spaceWidth);
+    if (!tight) {
+        draw_tight_text(rp, x, y, str, charGap, spaceWidth, -1, FALSE);
+        return;
+    }
+
+    SetFont(rp, tight);
+    Move(rp, x, y);
+    Text(rp, str, strlen((const char *)str));
+    SetFont(rp, base);
 }
 
 /*
@@ -259,6 +472,8 @@ static const char *get_hardware_page_label(void)
             return get_string(MSG_HARDWARE_CPU);
         case HARDWARE_EXT:
             return get_string(MSG_HARDWARE_EXT);
+        case HARDWARE_SCSI:
+            return get_string(MSG_HARDWARE_SCSI);
         case HARDWARE_CLOCK:
             return get_string(MSG_HARDWARE_CLOCK);
         case HARDWARE_STD:
@@ -273,19 +488,6 @@ static void set_button_enabled(ButtonID id, BOOL enabled)
     if (btn) {
         btn->enabled = enabled;
     }
-}
-
-static void update_cache_button_enabled_states(void)
-{
-    BOOL cpu_page = app->hardware_type == HARDWARE_CPU;
-
-    set_button_enabled(BTN_ICACHE, cpu_page && hw_info.has_icache);
-    set_button_enabled(BTN_DCACHE, cpu_page && hw_info.has_dcache);
-    set_button_enabled(BTN_IBURST, cpu_page && hw_info.has_iburst);
-    set_button_enabled(BTN_DBURST, cpu_page && hw_info.has_dburst);
-    set_button_enabled(BTN_CBACK, cpu_page && hw_info.has_copyback);
-    set_button_enabled(BTN_SUPER_SCALAR,
-                       cpu_page && hw_info.has_super_scalar);
 }
 
 /*
@@ -308,14 +510,15 @@ void redraw_button(ButtonID id)
     if (!btn) return;
 
     /* For scroll arrows, use special drawing */
-    if (id == BTN_SOFTWARE_UP) {
+    if (id == BTN_SOFTWARE_UP || id == BTN_REPORT_UP) {
         draw_scroll_arrow(btn->x, btn->y, btn->width, btn->height,
                           TRUE, btn->pressed);
-    } else if (id == BTN_SOFTWARE_DOWN) {
+    } else if (id == BTN_SOFTWARE_DOWN || id == BTN_REPORT_DOWN) {
         draw_scroll_arrow(btn->x, btn->y, btn->width, btn->height,
                           FALSE, btn->pressed);
     } else if (id == BTN_SOFTWARE_CYCLE || id == BTN_SCALE_TOGGLE ||
-               id == BTN_HARDWARE_CYCLE || id == BTN_BOARD_DISPLAY) {
+               id == BTN_HARDWARE_CYCLE || id == BTN_BOARD_DISPLAY ||
+               id == BTN_REPORT_FORMAT) {
         draw_cycle_button(btn);
     } else {
         draw_button(btn);
@@ -339,7 +542,7 @@ void main_view_update_buttons(void)
     add_button(239, 187, 60, 11,
                get_string(MSG_BTN_SPEED), BTN_SPEED, TRUE);
     add_button(301, 187, 60, 11,
-               get_string(MSG_BTN_PRINT), BTN_PRINT, TRUE);
+               get_string(MSG_BTN_REPORT), BTN_REPORT, TRUE);
 
     /* Software type cycle button */
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W -
@@ -352,15 +555,15 @@ void main_view_update_buttons(void)
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + 15, 12, 10,
                NULL, BTN_SOFTWARE_UP,
-               app->software_type != SOFTWARE_OVERVIEW);
+               software_panel_scrolls());
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + 15 + 10, 12, SOFTWARE_PANEL_H - 15 - 10 - 12,
                NULL, BTN_SOFTWARE_SCROLLBAR,
-               app->software_type != SOFTWARE_OVERVIEW);
+               software_panel_scrolls());
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + SOFTWARE_PANEL_H - 12, 12, 10,
                NULL, BTN_SOFTWARE_DOWN,
-               app->software_type != SOFTWARE_OVERVIEW);
+               software_panel_scrolls());
 
     /* Scale toggle button */
     add_button(SPEED_PANEL_X + SPEED_PANEL_W -
@@ -376,62 +579,8 @@ void main_view_update_buttons(void)
                get_hardware_page_label(),
                BTN_HARDWARE_CYCLE, TRUE);
 
-    if (app->hardware_type == HARDWARE_CPU) {
-        /* Inline cache toggle buttons in hardware panel. */
-        snprintf(icache_label, sizeof(icache_label), "%s",
-                 hw_info.has_icache ?
-                     (hw_info.icache_enabled ? get_string(MSG_BTN_ON) :
-                                               get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-        snprintf(dcache_label, sizeof(dcache_label), "%s",
-                 hw_info.has_dcache ?
-                     (hw_info.dcache_enabled ? get_string(MSG_BTN_ON) :
-                                               get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-        snprintf(iburst_label, sizeof(iburst_label), "%s",
-                 hw_info.has_iburst ?
-                     (hw_info.iburst_enabled ? get_string(MSG_BTN_ON) :
-                                               get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-        snprintf(dburst_label, sizeof(dburst_label), "%s",
-                 hw_info.has_dburst ?
-                     (hw_info.dburst_enabled ? get_string(MSG_BTN_ON) :
-                                               get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-        snprintf(cback_label, sizeof(cback_label), "%s",
-                 hw_info.has_copyback ?
-                     (hw_info.copyback_enabled ? get_string(MSG_BTN_ON) :
-                                                 get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-        snprintf(super_scalar_label, sizeof(super_scalar_label), "%s",
-                 hw_info.has_super_scalar ?
-                     (hw_info.super_scalar_enabled ? get_string(MSG_BTN_ON) :
-                                                     get_string(MSG_BTN_OFF)) :
-                     get_string(MSG_NA));
-
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0, CACHE_BTN_W, CACHE_BTN_H,
-                   icache_label, BTN_ICACHE, FALSE);
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0 + CACHE_ROW_STEP, CACHE_BTN_W,
-                   CACHE_BTN_H, dcache_label, BTN_DCACHE, FALSE);
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0 + CACHE_ROW_STEP * 2,
-                   CACHE_BTN_W, CACHE_BTN_H, iburst_label, BTN_IBURST, FALSE);
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0 + CACHE_ROW_STEP * 3,
-                   CACHE_BTN_W, CACHE_BTN_H, dburst_label, BTN_DBURST,
-                   FALSE);
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0 + CACHE_ROW_STEP * 4,
-                   CACHE_BTN_W, CACHE_BTN_H, cback_label, BTN_CBACK, FALSE);
-        add_button(CACHE_BTN_X, CACHE_ROW_Y0 + CACHE_ROW_STEP * 5,
-                   CACHE_BTN_W, CACHE_BTN_H, super_scalar_label,
-                   BTN_SUPER_SCALAR, FALSE);
-        update_cache_button_enabled_states();
-
-        set_button_pressed(BTN_ICACHE, hw_info.icache_enabled);
-        set_button_pressed(BTN_DCACHE, hw_info.dcache_enabled);
-        set_button_pressed(BTN_IBURST, hw_info.iburst_enabled);
-        set_button_pressed(BTN_DBURST, hw_info.dburst_enabled);
-        set_button_pressed(BTN_CBACK, hw_info.copyback_enabled);
-        set_button_pressed(BTN_SUPER_SCALAR, hw_info.super_scalar_enabled);
-    }
+    build_hardware_rows();
+    add_hardware_buttons();
 }
 
 /*
@@ -461,25 +610,15 @@ void main_view_handle_button(ButtonID id)
             Forbid();
             run_benchmarks();
             Permit();
+            invalidate_hardware_rows();
             hide_status_overlay();
             update_button_states();
             refresh_hardware_benchmark_rows();
             refresh_speed_panel_contents();
             break;
 
-        case BTN_PRINT:
-            {
-                char filename[MAX_FILENAME_LEN];
-                strncpy(filename, DEFAULT_OUTPUT_FILE, sizeof(filename) - 1);
-                filename[sizeof(filename) - 1] = '\0';
-
-                if (show_filename_requester(
-                        get_string(MSG_ENTER_FILENAME), filename, sizeof(filename))) {
-                    if (!export_to_file(filename)) {
-                        show_timed_overlay("Export failed", 100);
-                    }
-                }
-            }
+        case BTN_REPORT:
+            open_report_view();
             break;
 
         case BTN_SOFTWARE_CYCLE:
@@ -488,9 +627,21 @@ void main_view_handle_button(ButtonID id)
             app->scrollbar_dragging = FALSE;
             update_software_list(TRUE);
             break;
+        case BTN_HARDWARE_PREV:
+            if (hardware_page > 0) hardware_page--;
+            update_hardware_text();
+            break;
+        case BTN_HARDWARE_NEXT:
+            if (hardware_page + 1 < hardware_pages) hardware_page++;
+            update_hardware_text();
+            break;
         case BTN_HARDWARE_CYCLE:
+            hardware_page = 0;
             app->hardware_type =
                 (app->hardware_type + 1) % HARDWARE_COUNT;
+            if (app->hardware_type == HARDWARE_SCSI &&
+                !hw_info.sdmac_present && hw_info.ncr_type == NCR_NONE)
+                app->hardware_type = HARDWARE_CLOCK;
             update_hardware_text();
             break;
 
@@ -538,12 +689,10 @@ void main_view_handle_button(ButtonID id)
             break;
 
         case BTN_SOFTWARE_DOWN:
-            {
-                SoftwareList *list = get_software_list(app->software_type);
-                if (list && app->software_scroll < (LONG)list->count - SOFTWARE_LIST_LINES) {
-                    app->software_scroll++;
-                    update_software_list(FALSE);
-                }
+            if (app->software_scroll <
+                (LONG)software_row_count() - SOFTWARE_LIST_LINES) {
+                app->software_scroll++;
+                update_software_list(FALSE);
             }
             break;
 
@@ -580,10 +729,35 @@ void update_button_states(void)
             boards_view_update_buttons();
             break;
 
+        case VIEW_BOARD_DETAILS:
+            board_detail_view_update_buttons();
+            break;
+
+        case VIEW_REPORT:
+            report_view_update_buttons();
+            break;
         case VIEW_SCSI:
             scsi_view_update_buttons();
             break;
     }
+}
+
+/*
+ * The main view's header and panels fill their own areas, so only the
+ * gaps between them need the background colour. Clearing the whole
+ * window first costs about 40 ms on a 68000 and flashes the panels.
+ */
+static void clear_main_view_gaps(void)
+{
+    struct RastPort *rp = app->rp;
+    WORD bottom = HARDWARE_PANEL_Y + HARDWARE_PANEL_H;
+
+    SetAPen(rp, COLOR_BACKGROUND);
+    RectFill(rp, 0, HEADER_HEIGHT, SCREEN_WIDTH - 1, SOFTWARE_PANEL_Y - 1);
+    RectFill(rp, SOFTWARE_PANEL_X + SOFTWARE_PANEL_W, HARDWARE_PANEL_Y,
+             HARDWARE_PANEL_X - 1, bottom - 1);
+    if (app->screen_height > bottom)
+        RectFill(rp, 0, bottom, SCREEN_WIDTH - 1, app->screen_height - 1);
 }
 
 /*
@@ -594,8 +768,12 @@ void redraw_current_view(void)
     struct RastPort *rp = app->rp;
 
     /* Clear background */
-    SetAPen(rp, COLOR_BACKGROUND);
-    RectFill(rp, 0, 0, SCREEN_WIDTH - 1, app->screen_height - 1);
+    if (app->current_view == VIEW_MAIN) {
+        clear_main_view_gaps();
+    } else {
+        SetAPen(rp, COLOR_BACKGROUND);
+        RectFill(rp, 0, 0, SCREEN_WIDTH - 1, app->screen_height - 1);
+    }
 
     update_button_states();
 
@@ -611,6 +789,13 @@ void redraw_current_view(void)
             break;
         case VIEW_BOARDS:
             draw_boards_view();
+            break;
+
+        case VIEW_BOARD_DETAILS:
+            draw_board_detail_view();
+            break;
+        case VIEW_REPORT:
+            draw_report_view();
             break;
         case VIEW_SCSI:
             draw_scsi_view();
@@ -630,9 +815,21 @@ void draw_main_view(void)
     draw_bottom_buttons();
 }
 
-static BOOL xsysinfo_logo_pixel(WORD x, WORD y)
+
+BOOL init_drawing(void)
 {
-    return (xsysinfo_logo_template[y][x >> 4] & (0x8000 >> (x & 15))) != 0;
+    drawing_template = AllocMem(DRAWING_TEMPLATE_SIZE, MEMF_CHIP);
+    return drawing_template != NULL;
+}
+
+void cleanup_drawing(void)
+{
+    free_tight_fonts();
+    if (drawing_template) {
+        WaitBlit();
+        FreeMem(drawing_template, DRAWING_TEMPLATE_SIZE);
+        drawing_template = NULL;
+    }
 }
 
 static BOOL gradients_available(void)
@@ -642,34 +839,53 @@ static BOOL gradients_available(void)
 
 #include "bayer-16x16.c"
 
-/* Fill a gradient in 16-pixel-wide bands using pre-generated dither patterns. */
+/* Build one period of the area pattern in Chip RAM. The band boundaries
+ * start at left, but RectFill's pattern bits follow raster coordinates.
+ * Keep that phase when a band straddles two source words. */
+static WORD build_gradient_template(WORD left, WORD top, WORD width)
+{
+    WORD phase = left & 15;
+    WORD words = (phase + width + 15) / 16;
+    UWORD low_mask = 0xffffU >> phase;
+    WORD offset, row;
+
+    memset(drawing_template, 0, words * sizeof(UWORD) * 16);
+    for (offset = 0; offset < width; offset += 16) {
+        WORD level = width > 1 ? ((LONG)offset * 256) / (width - 1) : 0;
+        WORD word = offset / 16;
+        for (row = 0; row < 16; row++) {
+            UWORD pattern = bayer16x16[level][(top + row) & 15];
+            drawing_template[row * words + word] |= pattern & low_mask;
+            if (phase && word + 1 < words)
+                drawing_template[row * words + word + 1] |= pattern & ~low_mask;
+        }
+    }
+    return words * sizeof(UWORD);
+}
+
+/* Draw one 16-row period at a time; graphics.library handles layer clipping. */
 static void draw_gradient(WORD left, WORD top, WORD width, WORD height,
                           WORD start_color, WORD end_color)
 {
     struct RastPort *rp = app->rp;
-    LONG offset;
-    LONG bottom = (LONG)top + height - 1;
+    WORD stride;
+    LONG row;
 
-    if (width <= 0 || height <= 0)
+    if (width <= 0 || width > SCREEN_WIDTH || height <= 0)
         return;
 
+    stride = build_gradient_template(left, top, width);
     SetDrMd(rp, JAM2);
     SetBPen(rp, start_color);
     SetAPen(rp, end_color);
-
-    for (offset = 0; offset < width; offset += 16) {
-        WORD fill_width = width - offset;
-        WORD level;
-
-        if (fill_width > 16)
-            fill_width = 16;
-
-        /* Pattern indices run from 0 to 256; a single pixel uses the start color. */
-        level = width > 1 ? (offset * 256) / (width - 1) : 0;
-        SetAfPt(rp, bayer16x16[level], 4); /* 2^4 = 16 pattern rows */
-        RectFill(rp, left + offset, top, left + offset + fill_width - 1, bottom);
+    for (row = 0; row < height; row += 16) {
+        WORD rows = height - row;
+        if (rows > 16) rows = 16;
+        BltTemplate(drawing_template, left & 15, stride, rp,
+                    left, top + row, width, rows);
     }
-
+    /* The next draw may overwrite the shared source. */
+    WaitBlit();
     SetAfPt(rp, NULL, 0);
 }
 
@@ -693,38 +909,19 @@ static WORD shadow_text_color(void)
     return app->dark_mode ? COLOR_BACKGROUND : COLOR_TEXT;
 }
 
-static void draw_xsysinfo_logo_mask(struct RastPort *rp, WORD x, WORD y, WORD color)
-{
-    WORD row, col, start;
-
-    SetAPen(rp, color);
-    for (row = 0; row < XSYSINFO_LOGO_H; row++) {
-        start = -1;
-        for (col = 0; col <= XSYSINFO_LOGO_W; col++) {
-            BOOL on = (col < XSYSINFO_LOGO_W) && xsysinfo_logo_pixel(col, row);
-
-            if (on && start < 0) {
-                start = col;
-            } else if (!on && start >= 0) {
-                if (start == col - 1) {
-                    WritePixel(rp, x + start, y + row);
-                } else {
-                    Move(rp, x + start, y + row);
-                    Draw(rp, x + col - 1, y + row);
-                }
-                start = -1;
-            }
-        }
-    }
-}
-
 static void draw_xsysinfo_logo(WORD x, WORD y)
 {
     struct RastPort *rp = app->rp;
 
+    memcpy(drawing_template, xsysinfo_logo_template, sizeof(xsysinfo_logo_template));
     SetDrMd(rp, JAM1);
-    draw_xsysinfo_logo_mask(rp, x + 1, y + 1, shadow_text_color());
-    draw_xsysinfo_logo_mask(rp, x, y, COLOR_HIGHLIGHT);
+    SetAPen(rp, shadow_text_color());
+    BltTemplate(drawing_template, 0, XSYSINFO_LOGO_BPR, rp, x + 1, y + 1,
+                XSYSINFO_LOGO_W, XSYSINFO_LOGO_H);
+    SetAPen(rp, COLOR_HIGHLIGHT);
+    BltTemplate(drawing_template, 0, XSYSINFO_LOGO_BPR, rp, x, y,
+                XSYSINFO_LOGO_W, XSYSINFO_LOGO_H);
+    WaitBlit();
 }
 
 /*
@@ -744,7 +941,8 @@ static void draw_header(void)
     UWORD title_len;
     UWORD subtitle_len;
 
-    draw_panel(0, 0, 640, HEADER_HEIGHT, NULL);
+    /* The gradient or fill below covers everything inside the border. */
+    draw_3d_box(0, 0, SCREEN_WIDTH, HEADER_HEIGHT, FALSE);
 
     /* Title bar background with a dithered gradient, SysInfo-style */
     if (gradients_available()) {
@@ -762,7 +960,7 @@ static void draw_header(void)
     /* Title text */
     snprintf(title, sizeof(title), "%s - %s", XSYSINFO_VERSION, get_string(MSG_TAGLINE));
     title_len = strlen(title);
-    title_width = title_len * 8;
+    title_width = TextLength(rp, (CONST_STRPTR)title, title_len);
     title_x = title_area_x;
     if (title_width < title_area_w) {
         title_x += (title_area_w - title_width) / 2;
@@ -772,7 +970,7 @@ static void draw_header(void)
     snprintf(subtitle, sizeof(subtitle), "%s https://github.com/reinauer/xsysinfo",
              get_string(MSG_CONTACT_LABEL));
     subtitle_len = strlen(subtitle);
-    subtitle_width = subtitle_len * 8;
+    subtitle_width = TextLength(rp, (CONST_STRPTR)subtitle, subtitle_len);
     subtitle_x = title_area_x;
     if (subtitle_width < title_area_w) {
         subtitle_x += (title_area_w - subtitle_width) / 2;
@@ -803,9 +1001,12 @@ void draw_panel(WORD x, WORD y, WORD w, WORD h, const char *title)
     struct RastPort *rp = app->rp;
     UWORD title_len;
 
-    /* Panel background */
-    SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, x, y, x + w - 1, y + h - 1);
+    /* Panel background. A title strip fills its inside in its own colour
+     * below, and the border covers the outer edge. */
+    if (!title) {
+        SetAPen(rp, COLOR_PANEL_BG);
+        RectFill(rp, x, y, x + w - 1, y + h - 1);
+    }
 
     /* 3D border - top/left light */
     SetAPen(rp, COLOR_BUTTON_LIGHT);
@@ -900,12 +1101,12 @@ void draw_button(Button *btn)
     /* Label - centered */
     if (btn->label) {
         text_len = strlen(btn->label);
-        text_x = btn->x + (btn->width - text_len * 8) / 2;
-        text_y = btn->y + (btn->height + 6) / 2;
+        text_x = btn->x + (btn->width -
+                 TextLength(rp, (CONST_STRPTR)btn->label, text_len)) / 2;
+        text_y = btn->y + (btn->height - rp->TxHeight) / 2 + rp->TxBaseline;
 
         SetAPen(rp, btn->enabled ? COLOR_TEXT : COLOR_PANEL_BG);
         SetBPen(rp, btn->enabled ? COLOR_PANEL_BG : COLOR_BUTTON_DARK);
-        TextLength(rp, (CONST_STRPTR)btn->label, text_len);
         Move(rp, text_x, text_y);
         Text(rp, (CONST_STRPTR)btn->label, text_len);
     }
@@ -935,14 +1136,12 @@ void draw_cycle_button(Button *btn)
 
     /* Draw the cycle marker as a crisp '>' glyph. */
     icon_x = btn->x + 4;
-    text_y = btn->y + (btn->height + 6) / 2 - 1;
+    text_y = btn->y + (btn->height - rp->TxHeight) / 2 + rp->TxBaseline;
 
     SetAPen(rp, shadow_text_color());
-    TextLength(rp, (CONST_STRPTR)">", 1);
     Move(rp, icon_x + 1, text_y + 1);
     Text(rp, (CONST_STRPTR)">", 1);
     SetAPen(rp, btn->enabled ? COLOR_HIGHLIGHT : COLOR_BACKGROUND);
-    TextLength(rp, (CONST_STRPTR)">", 1);
     Move(rp, icon_x, text_y);
     Text(rp, (CONST_STRPTR)">", 1);
 
@@ -952,11 +1151,9 @@ void draw_cycle_button(Button *btn)
         text_x = btn->x + 14;  /* After icon */
 
         SetAPen(rp, shadow_text_color());
-        TextLength(rp, (CONST_STRPTR)btn->label, text_len);
         Move(rp, text_x + 1, text_y + 1);
         Text(rp, (CONST_STRPTR)btn->label, text_len);
         SetAPen(rp, btn->enabled ? COLOR_HIGHLIGHT : COLOR_BACKGROUND);
-        TextLength(rp, (CONST_STRPTR)btn->label, text_len);
         Move(rp, text_x, text_y);
         Text(rp, (CONST_STRPTR)btn->label, text_len);
     }
@@ -1023,7 +1220,7 @@ void draw_scroll_arrow(WORD x, WORD y, WORD w, WORD h, BOOL up, BOOL pressed)
 }
 
 /* Shared by drawing and hit testing; offset includes the track border. */
-static void scrollbar_knob(WORD h, ULONG pos, ULONG total, ULONG visible,
+void scrollbar_knob(WORD h, ULONG pos, ULONG total, ULONG visible,
                            WORD *offset, WORD *size)
 {
     WORD inner_h = h - 2;
@@ -1070,39 +1267,37 @@ void draw_scroll_bar(WORD x, WORD y, WORD w, WORD h, ULONG pos, ULONG total, ULO
 /*
  * Draw text at position
  */
-void draw_text(WORD x, WORD y, const char *text, UBYTE color)
+/* Explicit spans keep the compatibility sequence in one place. */
+static void draw_text_span(WORD x, WORD y, const char *text, WORD len,
+                           UBYTE color)
 {
     struct RastPort *rp = app->rp;
-    WORD len = strlen(text);
 
     SetAPen(rp, color);
     SetBPen(rp, COLOR_PANEL_BG);
-    TextLength(rp, (CONST_STRPTR)text, len);
     Move(rp, x, y);
     Text(rp, (CONST_STRPTR)text, len);
 }
 
-/*
- * Draw text right-aligned
- */
-void draw_text_right(WORD x, WORD y, WORD width, const char *text, UBYTE color)
+void draw_text(WORD x, WORD y, const char *text, UBYTE color)
 {
-    struct RastPort *rp = app->rp;
-    WORD text_x = x + width - TextLength(rp, (CONST_STRPTR)text, strlen(text));
-
-    draw_text(text_x, y, text, color);
+    draw_text_span(x, y, text, strlen(text), color);
 }
 
-/*
- * Draw text centered within a width
- */
+void draw_text_right(WORD x, WORD y, WORD width, const char *text, UBYTE color)
+{
+    WORD len = strlen(text);
+    WORD text_x = x + width - TextLength(app->rp, (CONST_STRPTR)text, len);
+
+    draw_text_span(text_x, y, text, len, color);
+}
+
 void draw_text_centered(WORD x, WORD y, WORD width, const char *text, UBYTE color)
 {
-    struct RastPort *rp = app->rp;
-    WORD text_x = x + (width - TextLength(rp, (CONST_STRPTR)text,
-                                           strlen(text))) / 2;
+    WORD len = strlen(text);
+    WORD text_x = x + (width - TextLength(app->rp, (CONST_STRPTR)text, len)) / 2;
 
-    draw_text(text_x, y, text, color);
+    draw_text_span(text_x, y, text, len, color);
 }
 
 /*
@@ -1153,107 +1348,129 @@ void draw_label_value(WORD x, WORD y, const char *label, const char *value, WORD
     draw_label_value_max(x, y, label, value, offset, SCREEN_WIDTH - 4);
 }
 
-static void draw_hardware_overview_row(WORD y, const char *label,
-                                       const char *value)
+static BOOL hardware_cache_enabled(ButtonID id)
 {
+    return cache_setting_enabled(id - BTN_ICACHE + CACHE_ICACHE);
+}
+
+/* Keep sections on one page when they fit. Oversized sections may span pages. */
+static void layout_hardware_rows(void)
+{
+    WORD i, j, height = 0, available, used = 0, page = 0;
+    WORD top = HARDWARE_PANEL_Y + 18;
+    WORD bottom = HARDWARE_PANEL_Y + HARDWARE_PANEL_H - 3;
+    for (i = 0; i < hardware_row_count; i++) height += hardware_rows[i].height;
+    available = bottom - top + 1;
+    if (height > available) available -= app->rp->TxHeight + 6;
+    for (i = 0; i < hardware_row_count; i++) {
+        HardwareRow *row = &hardware_rows[i];
+        if (!i || row->group != hardware_rows[i - 1].group) {
+            WORD section = 0;
+            for (j = i; j < hardware_row_count && hardware_rows[j].group == row->group; j++)
+                section += hardware_rows[j].height;
+            if (used && section <= available && used + section > available) {
+                page++;
+                used = 0;
+            }
+        }
+        if (used && used + row->height > available) {
+            page++;
+            used = 0;
+        }
+        row->page = page;
+        row->top = top + used;
+        row->y = row->top + (row->height - app->rp->TxHeight) / 2 + app->rp->TxBaseline;
+        used += row->height;
+    }
+    hardware_pages = page + 1;
+    if (hardware_page >= hardware_pages) hardware_page = hardware_pages - 1;
+
+    /* Align columns per section using actual font widths. Preserve the current
+     * minimum column, but leave enough room for the longest value where possible. */
+    for (i = 0; i < hardware_row_count; i = j) {
+        WORD column = 0, value_width = 0, limit;
+        for (j = i; j < hardware_row_count && hardware_rows[j].group == hardware_rows[i].group; j++) {
+            HardwareRow *row = &hardware_rows[j];
+            WORD width;
+            if (!row->has_value) continue;
+            width = row->indent + TextLength(app->rp, (CONST_STRPTR)row->label, strlen(row->label)) + 4;
+            if (width > column) column = width;
+            if (row->indent + row->offset > column) column = row->indent + row->offset;
+            width = TextLength(app->rp, (CONST_STRPTR)row->value, strlen(row->value));
+            if (width > value_width) value_width = width;
+        }
+        limit = HARDWARE_PANEL_W - 12 - value_width;
+        if (limit < 64) limit = 64;
+        if (column > limit) column = limit;
+        for (; i < j; i++)
+            if (hardware_rows[i].has_value)
+                hardware_rows[i].offset = column - hardware_rows[i].indent;
+    }
+}
+
+static void draw_hardware_row(HardwareRow *row, BOOL clear)
+{
+    WORD x = HARDWARE_PANEL_X + 4 + row->indent;
+    WORD right = HARDWARE_PANEL_X + HARDWARE_PANEL_W - 4;
     struct RastPort *rp = app->rp;
-
-    SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, HARDWARE_PANEL_X + 2, y - 7,
-             HARDWARE_PANEL_X + HARDWARE_PANEL_W - 3, y);
-    draw_label_value(HARDWARE_PANEL_X + 4, y, label, value,
-                     HARDWARE_OVERVIEW_VALUE_OFFSET);
-}
-
-static void format_cpu_value(char *buffer, size_t size)
-{
-    char mhz_buf[16] = "";
-
-    if (hw_info.cpu_mhz > 0) {
-        mhz_buf[0] = ' ';
-        format_scaled(mhz_buf + 1, sizeof(mhz_buf) - 1,
-                      hw_info.cpu_mhz, FALSE);
+    if (clear) {
+        SetAPen(rp, COLOR_PANEL_BG);
+        RectFill(rp, HARDWARE_PANEL_X + 2, row->top, right, row->top + row->height - 1);
     }
-
-    if (hw_info.cpu_revision[0] != '\0' &&
-        strcmp(hw_info.cpu_revision, "N/A") != 0) {
-        snprintf(buffer, size, "%s (%s)%s",
-                 hw_info.cpu_string, hw_info.cpu_revision, mhz_buf);
-    } else {
-        snprintf(buffer, size, "%s%s", hw_info.cpu_string, mhz_buf);
+    SetAPen(rp, COLOR_TEXT);
+    SetBPen(rp, COLOR_PANEL_BG);
+    draw_text_clipped(x, row->y, row->label,
+                      (row->control ? CACHE_BTN_X - 4 : row->has_value ? x + row->offset - 4 : right) - x);
+    if (row->has_value) {
+        SetAPen(rp, COLOR_HIGHLIGHT);
+        draw_text_clipped(x + row->offset, row->y, row->value, right - x - row->offset);
     }
 }
 
-static void format_fpu_value(char *buffer, size_t size)
+static void add_hardware_buttons(void)
 {
-    if (hw_info.fpu_type != FPU_NONE && !hw_info.fpu_enabled) {
-        snprintf(buffer, size, "%s (%s)",
-                 hw_info.fpu_string, get_string(MSG_OFF));
-    } else if (hw_info.fpu_type != FPU_NONE &&
-               hw_info.fpu_type != FPU_UNKNOWN && hw_info.fpu_mhz > 0) {
-        char mhz_buf[16];
+    WORD i;
+    for (i = 0; i < hardware_row_count; i++) {
+        HardwareRow *row = &hardware_rows[i];
+        if (row->page == hardware_page && row->control) {
+            add_button(CACHE_BTN_X, row->top, CACHE_BTN_W, row->height,
+                       row->value, row->control, TRUE);
+            set_button_pressed(row->control, hardware_cache_enabled(row->control));
+        }
+    }
+    if (hardware_pages > 1) {
+        WORD y = HARDWARE_PANEL_Y + HARDWARE_PANEL_H - app->rp->TxHeight - 5;
+        add_button(HARDWARE_PANEL_X + 4, y, 28, app->rp->TxHeight + 3,
+                   "<", BTN_HARDWARE_PREV, hardware_page > 0);
+        add_button(HARDWARE_PANEL_X + HARDWARE_PANEL_W - 32, y, 28, app->rp->TxHeight + 3,
+                   ">", BTN_HARDWARE_NEXT, hardware_page + 1 < hardware_pages);
+    }
+}
 
-        format_scaled(mhz_buf, sizeof(mhz_buf), hw_info.fpu_mhz, FALSE);
-        snprintf(buffer, size, "%s %s", hw_info.fpu_string, mhz_buf);
-    } else {
-        snprintf(buffer, size, "%s", hw_info.fpu_string);
+static void draw_hardware_panel_contents(void)
+{
+    WORD i;
+    char page[16];
+    /* Buttons and rows were built together by init_main_buttons(). */
+    for (i = 0; i < hardware_row_count; i++)
+        if (hardware_rows[i].page == hardware_page)
+            draw_hardware_row(&hardware_rows[i], FALSE);
+    draw_cache_buttons();
+    if (hardware_pages > 1) {
+        snprintf(page, sizeof(page), "%u / %u", hardware_page + 1, hardware_pages);
+        SetAPen(app->rp, COLOR_TEXT);
+        Move(app->rp, HARDWARE_PANEL_X + (HARDWARE_PANEL_W - TextLength(app->rp, (CONST_STRPTR)page, strlen(page))) / 2,
+             HARDWARE_PANEL_Y + HARDWARE_PANEL_H - 5);
+        Text(app->rp, (CONST_STRPTR)page, strlen(page));
+        redraw_button(BTN_HARDWARE_PREV);
+        redraw_button(BTN_HARDWARE_NEXT);
     }
 }
 
 static void refresh_hardware_benchmark_rows(void)
 {
-    char buffer[74];
-    WORD y;
-
-    if (app->current_view != VIEW_MAIN ||
-        app->hardware_type != HARDWARE_STD) {
-        return;
-    }
-
-    y = HARDWARE_PANEL_Y + 24 + 7 * 8;
-
-    format_cpu_value(buffer, sizeof(buffer));
-    draw_hardware_overview_row(y, get_string(MSG_CPU_MHZ), buffer);
-    y += 8;
-
-    format_fpu_value(buffer, sizeof(buffer));
-    draw_hardware_overview_row(y, get_string(MSG_FPU), buffer);
-
-    y += 16;
-    draw_hardware_overview_row(y, get_string(MSG_COMMENT), hw_info.comment);
-}
-
-static void format_mmu_value(char *buffer, size_t size)
-{
-    char mmu_value[sizeof(hw_info.mmu_string)];
-    const char *uncertainty = strstr(hw_info.mmu_string, " (");
-
-    /* detect_mmu() adds a localized uncertainty suffix; keep it compact here. */
-    if (uncertainty) {
-        snprintf(mmu_value, sizeof(mmu_value), "%.*s?",
-                 (int)(uncertainty - hw_info.mmu_string), hw_info.mmu_string);
-    } else {
-        copy_string(mmu_value, hw_info.mmu_string, sizeof(mmu_value));
-    }
-
-    if (hw_info.mmu_enabled) {
-        snprintf(buffer, size, "%s (%s)",
-                 mmu_value, get_string(MSG_IN_USE));
-    } else {
-        copy_string(buffer, mmu_value, size);
-    }
-}
-
-static void format_mmu_address(char *buffer, size_t size, ULONG address)
-{
-    APTR phys = mmu_physical_address((APTR)address);
-
-    if (phys != (APTR)address) {
-        snprintf(buffer, size, "$%08lX ->%s", (unsigned long)address,
-                 get_location_string(determine_mem_location(phys)));
-    } else {
-        snprintf(buffer, size, "$%08lX", (unsigned long)address);
-    }
+    if (app->current_view == VIEW_MAIN)
+        update_hardware_text();
 }
 
 /*
@@ -1284,6 +1501,7 @@ static void update_hardware_text(void)
 {
     Button *hw_cycle_btn;
 
+    invalidate_hardware_rows();
     update_button_states();
     hw_cycle_btn = find_button(BTN_HARDWARE_CYCLE);
 
@@ -1298,63 +1516,50 @@ static void update_hardware_text(void)
     draw_hardware_panel_contents();
 }
 
+/* Rows in the software panel: the selected list, or the overview. */
+static ULONG software_row_count(void)
+{
+    SoftwareList *list = get_software_list(app->software_type);
+
+    if (app->software_type == SOFTWARE_OVERVIEW)
+        return software_overview_count();
+    return list ? list->count : 0;
+}
+
+/* The overview fits the panel unless a ROM update and a PPC board add
+ * rows; only then does it scroll like the lists. */
+static BOOL software_panel_scrolls(void)
+{
+    if (app->software_type == SOFTWARE_OVERVIEW)
+        return software_overview_count() > SOFTWARE_LIST_LINES;
+    return get_software_list(app->software_type) != NULL;
+}
+
 static void draw_software_overview(void)
 {
-    static const LocaleStringID labels[] = {
-        MSG_OPERATING_SYSTEM, MSG_ROM, MSG_ACTIVE_ROM,
-        MSG_WORKBENCH, MSG_SETPATCH, MSG_GRAPHICS_SYSTEM
-    };
+    struct RastPort *rp = app->rp;
     char buffer[80];
-    const char *value;
-    ULONG row;
+    ULONG row, last, count = software_overview_count();
     WORD y = SOFTWARE_PANEL_Y + 22;
+    WORD right = SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 4;
 
-    for (row = 0; row < sizeof(labels) / sizeof(labels[0]); row++) {
-        value = buffer;
-        switch (row) {
-        case 0:
-            value = system_software.os_name[0] ? system_software.os_name :
-                    get_string(MSG_UNKNOWN_OS);
-            break;
-        case 1:
-            snprintf(buffer, sizeof(buffer), "%u.%u (%lu KB)",
-                     hw_info.kickstart_version, hw_info.kickstart_revision,
-                     (unsigned long)hw_info.kickstart_size);
-            break;
-        case 2:
-            snprintf(buffer, sizeof(buffer), "%u.%u",
-                     hw_info.kickstart_patch_version,
-                     hw_info.kickstart_patch_revision);
-            break;
-        case 3:
-            if (system_software.has_workbench_version)
-                snprintf(buffer, sizeof(buffer), "%u.%u",
-                         system_software.workbench_version,
-                         system_software.workbench_revision);
-            else
-                value = get_string(MSG_NA);
-            break;
-        case 4:
-            if (system_software.has_setpatch_version) {
-                if (system_software.is_tinysetpatch)
-                    snprintf(buffer, sizeof(buffer), "%u.%u (TinySetPatch %u.%u)",
-                             system_software.setpatch_version,
-                             system_software.setpatch_revision,
-                             system_software.tinysetpatch_version,
-                             system_software.tinysetpatch_revision);
-                else
-                    snprintf(buffer, sizeof(buffer), "%u.%u",
-                             system_software.setpatch_version,
-                             system_software.setpatch_revision);
-            } else
-                value = get_string(MSG_NA);
-            break;
-        default:
-            value = system_software.graphics_system;
-            break;
-        }
-        draw_label_value_max(SOFTWARE_PANEL_X + 4, y, get_string(labels[row]),
-                             value, 100, SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 4);
+    row = 0;
+    if (count > SOFTWARE_LIST_LINES) {
+        /* Leave the scroll bar alone and erase rows that scrolled away. */
+        right = SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 16;
+        SetAPen(rp, COLOR_PANEL_BG);
+        RectFill(rp, SOFTWARE_PANEL_X + 2, y - 7, right,
+                 SOFTWARE_PANEL_Y + SOFTWARE_PANEL_H - 2);
+        row = app->software_scroll;
+    }
+    /* As many rows as the scroll bar and arrows count with. */
+    last = row + SOFTWARE_LIST_LINES;
+    for (; row < count && row < last; row++) {
+        const char *value = format_software_overview_value(row, buffer,
+                                                          sizeof(buffer));
+        draw_label_value_max(SOFTWARE_PANEL_X + 4, y,
+                             get_string(software_overview_label(row)), value,
+                             100, right);
         y += TEXT_LINE_HEIGHT;
     }
 }
@@ -1385,20 +1590,8 @@ static void draw_software_field(WORD x, WORD y, const char *text,
     WORD end = x;
 
     if (tight) {
-        for (; *text; text++) {
-            WORD char_width = *text == ' ' ? 8 :
-                              TextLength(rp, (CONST_STRPTR)text, 1);
-            if (x + char_width > right) break;
-            end = x + char_width;
-            if (*text == ' ') {
-                clear_software_text(x, y, char_width);
-                x = end;
-            } else {
-                Move(rp, x, y);
-                Text(rp, (CONST_STRPTR)text, 1);
-                x += char_width > 7 ? 7 : char_width;
-            }
-        }
+        end = draw_tight_text(rp, x, y, (CONST_STRPTR)text, -1, 0,
+                              right, TRUE);
     } else {
         Move(rp, x, y);
         draw_text_clipped(x, y, text, width);
@@ -1435,15 +1628,14 @@ static void update_software_list(BOOL clear_content)
         }
     }
 
-    set_button_enabled(BTN_SOFTWARE_UP, list != NULL);
-    set_button_enabled(BTN_SOFTWARE_DOWN, list != NULL);
-    set_button_enabled(BTN_SOFTWARE_SCROLLBAR, list != NULL);
-    if (app->software_type == SOFTWARE_OVERVIEW) {
-        draw_software_overview();
+    set_button_enabled(BTN_SOFTWARE_UP, software_panel_scrolls());
+    set_button_enabled(BTN_SOFTWARE_DOWN, software_panel_scrolls());
+    set_button_enabled(BTN_SOFTWARE_SCROLLBAR, software_panel_scrolls());
+    if (!software_panel_scrolls()) {
+        if (app->software_type == SOFTWARE_OVERVIEW)
+            draw_software_overview();
         return;
     }
-    if (!list)
-        return;
 
     /* Draw scroll arrows with triangles */
     Button *up_btn = find_button(BTN_SOFTWARE_UP);
@@ -1463,7 +1655,12 @@ static void update_software_list(BOOL clear_content)
     if (scrollbar_btn) {
         draw_scroll_bar(scrollbar_btn->x, scrollbar_btn->y,
                         scrollbar_btn->width, scrollbar_btn->height,
-                        app->software_scroll, list->count, SOFTWARE_LIST_LINES);
+                        app->software_scroll, software_row_count(),
+                        SOFTWARE_LIST_LINES);
+    }
+    if (app->software_type == SOFTWARE_OVERVIEW) {
+        draw_software_overview();
+        return;
     }
 
     /* Draw list entries */
@@ -1519,22 +1716,8 @@ static void update_software_list(BOOL clear_content)
  */
 static ULONG scale_bar_width(ULONG value, ULONG max_value)
 {
-    if (max_value == 0 || value == 0) return 0;
-
-    if (app->bar_scale == SCALE_EXPAND) {
-        /* Linear scale */
-        return (ULONG)(((unsigned long long)value * SPEED_BAR_MAX_WIDTH) / max_value);
-    } else {
-        /* Shrink mode: A3000 at 100% */
-        ULONG a4000_value = reference_systems[REF_A3000].dhrystones;
-        ULONG ref_width = SPEED_BAR_MAX_WIDTH;
-        if (value <= a4000_value) {
-            return (ULONG)(((unsigned long long)value * ref_width) / a4000_value);
-        }
-        return ref_width +
-            (ULONG)(((unsigned long long)(value - a4000_value) * ref_width) /
-            (max_value - a4000_value));
-    }
+    return scale_speed_value(value, max_value, SPEED_BAR_MAX_WIDTH,
+                             app->bar_scale);
 }
 
 /*
@@ -1556,33 +1739,47 @@ static const UBYTE micro_glyphs[11][5] = {
     { 5, 6, 4, 6, 5 },  /* K */
 };
 
-static WORD draw_micro_glyph(WORD x, WORD y, int glyph)
+/* The ruler shares the drawing scratch; each mask is five rows high. */
+static void clear_ruler_span(UWORD *bits, WORD x, WORD width)
 {
-    struct RastPort *rp = app->rp;
-    WORD row, col;
+    while (width > 0) {
+        WORD phase = x & 15;
+        WORD count = 16 - phase;
+        WORD row;
+        UWORD keep;
+
+        if (count > width) count = width;
+        keep = ~((0xffffU >> phase) & (0xffffU << (16 - phase - count)));
+        for (row = 0; row < 5; row++)
+            bits[row * TEXT_TEMPLATE_WORDS + (x >> 4)] &= keep;
+        x += count;
+        width -= count;
+    }
+}
+
+static WORD draw_micro_glyph(WORD x, int glyph)
+{
+    WORD row;
 
     for (row = 0; row < 5; row++) {
-        UBYTE bits = micro_glyphs[glyph][row];
-        for (col = 0; col < 3; col++) {
-            if (bits & (4 >> col)) {
-                WritePixel(rp, x + col, y + row);
-            }
-        }
+        ULONG *out = (ULONG *)(drawing_template +
+                              row * TEXT_TEMPLATE_WORDS + (x >> 4));
+        *out |= (ULONG)micro_glyphs[glyph][row] << (29 - (x & 15));
     }
     return x + 4;
 }
 
-static void draw_micro_number(WORD x, WORD y, ULONG value, BOOL kilo)
+static void draw_micro_number(WORD x, ULONG value, BOOL kilo)
 {
     char buf[12];
     int i;
 
     snprintf(buf, sizeof(buf), "%lu", (unsigned long)value);
     for (i = 0; buf[i]; i++) {
-        x = draw_micro_glyph(x, y, buf[i] - '0');
+        x = draw_micro_glyph(x, buf[i] - '0');
     }
     if (kilo && value > 0) {
-        draw_micro_glyph(x, y, 10);
+        draw_micro_glyph(x, 10);
     }
 }
 
@@ -1598,7 +1795,8 @@ static void draw_speed_ruler(ULONG max_value)
     WORD y = SPEED_PANEL_Y + 15;
     ULONG lab_max, mag, q, step, v;
     BOOL kilo;
-    WORD x;
+    WORD x, last_tick = x0;
+    UWORD *dots = drawing_template + TEXT_TEMPLATE_WORDS * 5;
 
     /* Clear the band */
     SetAPen(rp, COLOR_PANEL_BG);
@@ -1630,10 +1828,11 @@ static void draw_speed_ruler(ULONG max_value)
 
     SetDrMd(rp, JAM1);
 
+    memset(drawing_template, 0, TEXT_TEMPLATE_WORDS * sizeof(UWORD) * 10);
+
     /* Dotted baseline across the bar width */
-    SetAPen(rp, COLOR_BUTTON_DARK);
     for (x = x0; x < x0 + SPEED_BAR_MAX_WIDTH; x += 4) {
-        WritePixel(rp, x, y + 4);
+        dots[4 * TEXT_TEMPLATE_WORDS + (x >> 4)] |= 0x8000U >> (x & 15);
     }
 
     for (v = 0; ; v += step) {
@@ -1646,21 +1845,32 @@ static void draw_speed_ruler(ULONG max_value)
         x = x0 + (WORD)w;
 
         /* Tick mark */
-        SetAPen(rp, COLOR_TEXT);
-        Move(rp, x, y + 2);
-        Draw(rp, x, y + 4);
+        {
+            WORD row;
+            for (row = 2; row < 5; row++)
+                drawing_template[row * TEXT_TEMPLATE_WORDS + (x >> 4)] |=
+                    0x8000U >> (x & 15);
+            last_tick = x;
+        }
 
         /* Label to the right of the tick, interrupting the dotted line */
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)label);
         label_w = strlen(buf) * 4 + ((kilo && label) ? 4 : 0);
         if (x + 3 + label_w <= x0 + SPEED_BAR_MAX_WIDTH) {
-            SetAPen(rp, COLOR_PANEL_BG);
-            RectFill(rp, x + 2, y, x + 2 + label_w, y + 4);
-            SetAPen(rp, COLOR_TEXT);
-            draw_micro_number(x + 3, y, label, kilo);
+            clear_ruler_span(drawing_template, x + 2, label_w + 1);
+            clear_ruler_span(dots, x + 2, label_w + 1);
+            draw_micro_number(x + 3, label, kilo);
         }
     }
 
+    SetAPen(rp, COLOR_BUTTON_DARK);
+    BltTemplate(dots + (x0 >> 4), x0 & 15, TEXT_TEMPLATE_WORDS * 2,
+                rp, x0, y, SPEED_BAR_MAX_WIDTH, 5);
+    SetAPen(rp, COLOR_TEXT);
+    BltTemplate(drawing_template + (x0 >> 4), x0 & 15, TEXT_TEMPLATE_WORDS * 2,
+                rp, x0, y, SPEED_BAR_MAX_WIDTH, 5);
+    WaitBlit();
+    Move(rp, last_tick, y + 4);
     SetDrMd(rp, JAM2);
 }
 
@@ -1739,12 +1949,7 @@ static void refresh_speed_bars(BOOL redraw_scale_button)
         }
     }
 
-    if (app->bar_scale == SCALE_EXPAND) {
-        max_value = get_max_dhrystones();
-    } else {
-        ULONG a4000_value = reference_systems[REF_A4000].dhrystones;
-        max_value = a4000_value ? a4000_value * 2 : 1;
-    }
+    max_value = speed_scale_max(app->bar_scale);
 
     /* Ruler above the bars, same scale mapping as the bars */
     draw_speed_ruler(max_value);
@@ -1874,21 +2079,21 @@ static void draw_speed_panel_contents(BOOL redraw_scale_button)
         const WORD column_width = 42;
 
         /* Format CHIP speed in MB/s */
-        if (bench_results.benchmarks_valid && bench_results.chip_speed > 0) {
+        if (bench_results.chip_speed > 0) {
             format_scaled(chip_str, sizeof(chip_str), bench_results.chip_speed / 10000, TRUE);
         } else {
             snprintf(chip_str, sizeof(chip_str), "%s", get_string(MSG_NA));
         }
 
         /* Format FAST speed in MB/s or N/A */
-        if (bench_results.benchmarks_valid && bench_results.fast_speed > 0) {
+        if (bench_results.fast_speed > 0) {
             format_scaled(fast_str, sizeof(fast_str), bench_results.fast_speed / 10000, TRUE);
         } else {
             snprintf(fast_str, sizeof(fast_str), "%s", get_string(MSG_NA));
         }
 
         /* Format ROM speed in MB/s */
-        if (bench_results.benchmarks_valid && bench_results.rom_speed > 0) {
+        if (bench_results.rom_speed > 0) {
             format_scaled(rom_str, sizeof(rom_str), bench_results.rom_speed / 10000, TRUE);
         } else {
             snprintf(rom_str, sizeof(rom_str), "%s", get_string(MSG_NA));
@@ -1945,37 +2150,25 @@ static void draw_speed_panel(void)
 }
 
 /* Refresh just the changing date/time rows, including midnight rollover. */
-static void draw_clock_time_rows(BOOL force)
-{
-    static char previous[2][24];
-    static const LocaleStringID labels[] = { MSG_RTC_DATE, MSG_RTC_TIME };
-    struct ClockData date;
-    char values[2][24];
-    ULONG row;
-
-    if (read_hardware_time(&date)) {
-        snprintf(values[0], sizeof(values[0]), "%04u-%02u-%02u",
-                 date.year, date.month, date.mday);
-        snprintf(values[1], sizeof(values[1]), "%02u:%02u:%02u",
-                 date.hour, date.min, date.sec);
-    } else {
-        copy_string(values[0], get_string(MSG_NA), sizeof(values[0]));
-        copy_string(values[1], get_string(MSG_NA), sizeof(values[1]));
-    }
-    for (row = 0; row < 2; row++) {
-        if (force || strcmp(values[row], previous[row]) != 0) {
-            draw_hardware_overview_row(HARDWARE_PANEL_Y + 32 + row * 8,
-                                      get_string(labels[row]), values[row]);
-            copy_string(previous[row], values[row], sizeof(previous[row]));
-        }
-    }
-}
 
 void refresh_clock_page(void)
 {
-    if (app->current_view == VIEW_MAIN &&
-        app->hardware_type == HARDWARE_CLOCK && !overlay_backup.valid)
-        draw_clock_time_rows(FALSE);
+    char values[2][24];
+    WORD i, n;
+    if (app->current_view != VIEW_MAIN ||
+        app->hardware_type != HARDWARE_CLOCK || overlay_backup.valid)
+        return;
+    format_clock_values(values);
+    for (i = 0; i < hardware_row_count; i++) {
+        HardwareRow *row = &hardware_rows[i];
+        for (n = 0; n < 2; n++) {
+            if (row->label == get_string(n ? MSG_RTC_TIME : MSG_RTC_DATE) &&
+                row->page == hardware_page && strcmp(row->value, values[n])) {
+                copy_string(row->value, values[n], sizeof(row->value));
+                draw_hardware_row(row, TRUE);
+            }
+        }
+    }
 }
 
 /*
@@ -2000,488 +2193,56 @@ static void draw_hardware_panel(void)
     draw_hardware_panel_contents();
 }
 
-static void draw_hardware_panel_contents(void)
+/* Rows own their values because most callers reuse a formatting buffer. */
+static void collect_hardware_row(const HardwareInfoRow *info, void *data)
 {
-    WORD y;
-    char buffer[74];
-
-    y = HARDWARE_PANEL_Y + 24;
-    if (app->hardware_type == HARDWARE_STD) {
-        /* Identify the machine before listing its components. */
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         "Amiga", hw_info.amiga_model_string,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Mode */
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_MODE), hw_info.mode_string,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* DMA/Gfx */
-        switch (hw_info.agnus_type) {
-            case AGNUS_OCS_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_OCS_NTSC));
-                break;
-            case AGNUS_OCS_PAL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_OCS_PAL));
-                break;
-            case AGNUS_OCS_FAT_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_OCS_FAT_NTSC));
-                break;
-            case AGNUS_OCS_FAT_PAL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_OCS_FAT_PAL));
-                break;
-            case AGNUS_ECS_2MB_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_2MB_NTSC));
-                break;
-            case AGNUS_ECS_2MB_PAL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_2MB_PAL));
-                break;
-            case AGNUS_ECS_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_NTSC));
-                break;
-            case AGNUS_ECS_B_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_B_NTSC));
-                break;
-            case AGNUS_ECS_PAL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_PAL));
-                break;
-            case AGNUS_ECS_B_PAL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_ECS_B_PAL));
-                break;
-            case AGNUS_ALICE_NTSC:
-                snprintf(buffer, sizeof(buffer), "%s Rev. %X",
-                      get_string(MSG_AGNUS_ALICE_NTSC), (hw_info.agnus_rev&0xF));
-                break;
-            case AGNUS_ALICE_PAL:
-                snprintf(buffer, sizeof(buffer), "%s Rev. %X",
-                      get_string(MSG_AGNUS_ALICE_PAL), (hw_info.agnus_rev&0xF));
-                break;
-            case AGNUS_SAGA:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_AGNUS_SAGA));
-                break;
-            case AGNUS_UNKNOWN:
-            default:
-                snprintf(buffer, sizeof(buffer), "%s %2X",
-                      get_string(MSG_AGNUS_UNKNOWN), hw_info.agnus_rev);
-                break;
-        }
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_DMA_GFX), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Display */
-
-        switch (hw_info.denise_type) {
-            case DENISE_OCS:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_DENISE_OCS));
-                break;
-            case DENISE_ECS:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_DENISE_ECS));
-                break;
-            case DENISE_LISA:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_DENISE_LISA));
-                break;
-            case DENISE_ISABEL:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_DENISE_SAGA));
-                break;
-            case DENISE_UNKNOWN:
-            default:
-                snprintf(buffer, sizeof(buffer), "%s %02X",
-                      get_string(MSG_DENISE_UNKNOWN), hw_info.denise_rev);
-                break;
-        }
-
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_DISPLAY), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Sound */
-        switch (hw_info.paula_type) {
-            case PAULA_ORIG:
-                snprintf(buffer, sizeof(buffer), "%s",
-                      get_string(MSG_PAULA_ORIG));
-                break;
-            case PAULA_SAGA:
-                snprintf(buffer, sizeof(buffer), "%s (ID: %02X)",
-                      get_string(MSG_PAULA_SAGA),hw_info.paula_rev);
-                break;
-            case PAULA_UNKNOWN:
-                snprintf(buffer, sizeof(buffer), "%s (ID: %02X)",
-                      get_string(MSG_PAULA_UNKNOWN),hw_info.paula_rev);
-                break;
-        }
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_SOUND_SYSTEM), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Ramsey */
-        format_ramsey_rev_string(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_RAM_CONTROLLER), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Gary */
-        switch (hw_info.gary_type) {
-            case GARY_A1000:
-                copy_string(buffer, get_string(MSG_GARY_A1000), sizeof(buffer));
-                break;
-            case GARY_A500:
-                copy_string(buffer, get_string(MSG_GARY_A500), sizeof(buffer));
-                break;
-            case GAYLE:
-                snprintf(buffer, sizeof(buffer), "%s %02X", get_string(MSG_GAYLE), hw_info.gary_rev);
-                break;
-            case FAT_GARY:
-                copy_string(buffer, get_string(MSG_FAT_GARY), sizeof(buffer));
-                break;
-            case GARY_UNKNOWN:
-            default:
-                copy_string(buffer, get_string(MSG_GARY_UNKNOWN), sizeof(buffer));
-                break;
-        }
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_DECODING), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* CPU/MHz */
-        format_cpu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_CPU_MHZ), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* FPU */
-        format_fpu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_FPU), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* MMU */
-        format_mmu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_MMU), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Comment */
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_COMMENT), hw_info.comment,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        if (hw_info.ramsey_rev) {
-            if (hw_info.bus_mhz)
-                format_scaled(buffer, sizeof(buffer), hw_info.bus_mhz, TRUE);
-            else
-                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
-            draw_label_value(HARDWARE_PANEL_X + 4, y,
-                             get_string(MSG_BUS_MHZ), buffer,
-                             HARDWARE_OVERVIEW_VALUE_OFFSET);
-            y += 8;
-        }
-
-        /* Frequencies - left column continues */
-        {
-            unsigned long long horiz_khz =
-                ((unsigned long long)hw_info.horiz_freq * 100ULL) / 1000ULL;
-            format_scaled(buffer, sizeof(buffer), (ULONG)horiz_khz, FALSE);
-        }
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_HORIZ_KHZ), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-
-        y += 8;
-
-        /* EClock */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)hw_info.eclock_freq);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_ECLOCK_HZ), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Vert Hz */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)hw_info.vert_freq);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_VERT_HZ), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Supply Hz */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)hw_info.supply_freq);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_SUPPLY_HZ), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        /* Card Slot */
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_CARD_SLOT), hw_info.card_slot_string,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        format_size(memory_regions.total_chip_size, buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_CHIP_RAM), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        format_size(memory_regions.total_fast_size, buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_FAST_RAM), buffer,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-
-    } else if (app->hardware_type == HARDWARE_CPU) {
-        WORD cache_y;
-
-        format_cpu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_CPU_MHZ), buffer, 80);
-        y += 8;
-
-        format_fpu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_FPU), buffer, 80);
-        y += 8;
-
-        format_mmu_value(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_MMU), buffer, 80);
-        y += 8;
-
-        format_mmu_address(buffer, sizeof(buffer), hw_info.vbr);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_VBR), buffer, 80);
-        y += 8;
-
-        format_mmu_address(buffer, sizeof(buffer), hw_info.ssp);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_SSP), buffer, 80);
-        y += 8;
-
-        format_mmu_address(buffer, sizeof(buffer), (ULONG)SysBase);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         "ExecBase", buffer, 80);
-        y += 8;
-
-        format_mmu_address(buffer, sizeof(buffer), 0);
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         "Page 0", buffer, 80);
-        y += 8;
-
-        cache_y = CACHE_LABEL_Y0;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_ICACHE), NULL, 0,
-                             CACHE_BTN_X - 4);
-        cache_y += CACHE_ROW_STEP;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_DCACHE), NULL, 0,
-                             CACHE_BTN_X - 4);
-        cache_y += CACHE_ROW_STEP;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_IBURST), NULL, 0,
-                             CACHE_BTN_X - 4);
-        cache_y += CACHE_ROW_STEP;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_DBURST), NULL, 0,
-                             CACHE_BTN_X - 4);
-        cache_y += CACHE_ROW_STEP;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_CBACK), NULL, 0,
-                             CACHE_BTN_X - 4);
-        cache_y += CACHE_ROW_STEP;
-        draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
-                             get_string(MSG_SUPER_SCALAR), NULL, 0,
-                             CACHE_BTN_X - 4);
-        draw_cache_buttons();
-    } else if (app->hardware_type == HARDWARE_EXT) {
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_EXT_INFO), NULL, 120);
-        y += 8;
-        /* Ramsey */
-        format_ramsey_rev_string(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_RAM_CONTROLLER), buffer,
-                         HARDWARE_CHIPSET_VALUE_OFFSET);
-        y += 8;
-        if (hw_info.ramsey_rev) {
-            /* Ramsey status */
-            draw_label_value(HARDWARE_PANEL_X + 4, y,
-                             get_string(MSG_RAMSEY_CTRL), NULL, 120);
-            y += 8;
-
-            snprintf(buffer, sizeof(buffer), "%s", hw_info.ramsey_page_enabled ? get_string(MSG_ON) : get_string(MSG_OFF));
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_RAMSEY_PAGE), buffer, 110);
-            y += 8;
-
-            snprintf(buffer, sizeof(buffer), "%s", hw_info.ramsey_burst_enabled ? get_string(MSG_ON) : get_string(MSG_OFF));
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_RAMSEY_BURST), buffer, 110);
-            y += 8;
-            snprintf(buffer, sizeof(buffer), "%s", hw_info.ramsey_wrap_enabled ? get_string(MSG_ON) : get_string(MSG_OFF));
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_RAMSEY_WRAP), buffer, 110);
-            y += 8;
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_RAMSEY_SIZE),
-                             get_ramsey_size_string(), 110);
-            y += 8;
-            if (hw_info.ramsey_rev == 0x0f) {
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                 get_string(MSG_RAMSEY_SKIP),
-                                 get_string(hw_info.ramsey_skip_enabled ?
-                                            MSG_ON : MSG_OFF), 110);
-                y += 8;
-            }
-            switch (hw_info.ramsey_refresh_rate) {
-                case 0:
-                    copy_string(buffer, "156 clk", sizeof(buffer));
-                    break;
-                case 1:
-                    copy_string(buffer, "240 clk", sizeof(buffer));
-                    break;
-                case 2:
-                    copy_string(buffer, "372 clk", sizeof(buffer));
-                    break;
-                default:
-                    copy_string(buffer, get_string(MSG_OFF), sizeof(buffer));
-                    break;
-               }
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_RAMSEY_REFRESH), buffer, 110);
-            y += 8;
-        }
-        format_dma_string(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_DMA_CHIP), buffer,
-                         HARDWARE_CHIPSET_VALUE_OFFSET);
-        y += 8;
-        if (hw_info.resdmac_version) {
-            format_resdmac_version(buffer, sizeof(buffer));
-            draw_label_value(HARDWARE_PANEL_X + 18, y,
-                             get_string(MSG_DMA_VERSION), buffer, 110);
-            y += 8;
-        }
-        format_scsi_chip_string(buffer, sizeof(buffer));
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_SDMAC_REV), buffer,
-                         HARDWARE_CHIPSET_VALUE_OFFSET);
-        y += 8;
-
-        if (hw_info.sdmac_present && wd_info.chip != WD_UNKNOWN) {
-            static const LocaleStringID labels[WD_DETAIL_COUNT] = {
-                MSG_WD_MICROCODE, MSG_WD_CLOCK, MSG_WD_MODE,
-                MSG_TIMEOUT, MSG_WD_SYNC_OFFSET
-            };
-            unsigned detail;
-            for (detail = 0; detail < WD_DETAIL_COUNT; detail++) {
-                format_wd_detail(detail, buffer, sizeof(buffer));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                 get_string(labels[detail]), buffer, 110);
-                y += 8;
-            }
-        }
-        if (hw_info.ncr_type != NCR_NONE) {
-            static const LocaleStringID labels[NCR_DETAIL_COUNT] = {
-                MSG_SCSI_HOST_ID, MSG_NCR_DMA_BURST, MSG_WD_SYNC_OFFSET,
-                MSG_NCR_WIDTH, MSG_NCR_PARITY, MSG_NCR_DOUBLER
-            };
-            unsigned detail;
-            unsigned count = hw_info.ncr_type == NCR_53C770 ?
-                             NCR_DETAIL_COUNT : NCR_DETAIL_DOUBLER;
-            for (detail = 0; detail < count; detail++) {
-                format_ncr_detail(detail, buffer, sizeof(buffer));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                 get_string(labels[detail]), buffer, 110);
-                y += 8;
-            }
-        }
-    } else if (app->hardware_type == HARDWARE_CLOCK) {
-        draw_label_value(HARDWARE_PANEL_X + 4, y,
-                         get_string(MSG_CLOCK), hw_info.clock_string,
-                         HARDWARE_OVERVIEW_VALUE_OFFSET);
-        y += 8;
-
-        draw_clock_time_rows(TRUE);
-        y += 3 * 8;
-
-        if (hw_info.battMemData.available) {
-            draw_label_value(HARDWARE_PANEL_X + 4, y,
-                             get_string(MSG_NV_RAM), NULL, 120);
-            y += 8;
-            if (hw_info.battMemData.valid_data) {
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.amnesia_amiga ? get_string(MSG_YES) : get_string(MSG_NO));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_AMNESIA), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.amnesia_shared ? get_string(MSG_YES) : get_string(MSG_NO));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_SHARED_AMNESIA), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.long_timeout ? get_string(MSG_LONG) : get_string(MSG_SHORT));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_TIMEOUT), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.scan_luns ? get_string(MSG_ON) : get_string(MSG_OFF));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_SCAN_LUN), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.sync_transfer ? get_string(MSG_ON) : get_string(MSG_OFF));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_SYNC_TRANS), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.fast_sync_transfer ? get_string(MSG_ON) : get_string(MSG_OFF));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_FAST_SYNC), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%s", hw_info.battMemData.tagged_queuing ? get_string(MSG_ON) : get_string(MSG_OFF));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_QUEUING), buffer, 110);
-                y += 8;
-
-                snprintf(buffer, sizeof(buffer), "%d", hw_info.battMemData.scsi_id);
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                                get_string(MSG_SCSI_HOST_ID), buffer, 110);
-                y += 8;
-            }
-            else {
-                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
-                draw_label_value(HARDWARE_PANEL_X + 18, y,
-                            buffer, NULL, 120);
-                y += 8;
-            }
-        }
+    HardwareRow *row;
+    (void)data;
+    if (hardware_row_count >= MAX_HARDWARE_ROWS) return;
+    row = &hardware_rows[hardware_row_count++];
+    memset(row, 0, sizeof(*row));
+    row->label = info->label;
+    row->has_value = info->value != NULL;
+    copy_string(row->value, info->value ? info->value : "", sizeof(row->value));
+    row->indent = info->detail ? 14 : 0;
+    row->offset = info->detail ?
+        (info->label == get_string(MSG_CHIP_ID) ? 76 : 110) :
+        !info->value ? 120 :
+        app->hardware_type == HARDWARE_CPU ? 80 :
+        app->hardware_type == HARDWARE_SCSI ? HARDWARE_CHIPSET_VALUE_OFFSET :
+        HARDWARE_OVERVIEW_VALUE_OFFSET;
+    row->height = app->rp->TxHeight;
+    row->group = info->group;
+    if (info->control != CACHE_NONE) {
+        row->control = BTN_ICACHE + info->control - CACHE_ICACHE;
+        row->height += 3;
+        copy_string(row->value, get_string(cache_setting_enabled(info->control) ?
+                    MSG_BTN_ON : MSG_BTN_OFF), sizeof(row->value));
     }
+}
+
+/* Formatting the rows takes about 35 ms on a 68000, so keep them across
+ * redraws. They change with the page, cache settings and benchmark
+ * results, which invalidate them; the clock page changes every second. */
+static BOOL hardware_rows_valid;
+static HardwareType hardware_rows_type;
+
+static void invalidate_hardware_rows(void)
+{
+    hardware_rows_valid = FALSE;
+}
+
+static void build_hardware_rows(void)
+{
+    if (hardware_rows_valid && hardware_rows_type == app->hardware_type &&
+        app->hardware_type != HARDWARE_CLOCK)
+        return;
+
+    hardware_row_count = 0;
+    visit_hardware_rows(app->hardware_type, collect_hardware_row, NULL);
+    layout_hardware_rows();
+    hardware_rows_type = app->hardware_type;
+    hardware_rows_valid = TRUE;
 }
 
 /*
@@ -2491,7 +2252,7 @@ static void draw_bottom_buttons(void)
 {
     int i;
     for (i = 0; i < num_buttons; i++) {
-        if (buttons[i].id >= BTN_QUIT && buttons[i].id <= BTN_PRINT) {
+        if (buttons[i].id >= BTN_QUIT && buttons[i].id <= BTN_REPORT) {
             draw_button(&buttons[i]);
         }
     }
@@ -2520,70 +2281,8 @@ static void draw_cache_buttons(void)
  */
 static void refresh_all_cache_buttons(void)
 {
-    /* Refresh all cache states from hardware */
     refresh_cache_status();
-
-    /* Update all labels based on current state */
-    snprintf(icache_label, sizeof(icache_label), "%s",
-             hw_info.has_icache ?
-                 (hw_info.icache_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-    snprintf(dcache_label, sizeof(dcache_label), "%s",
-             hw_info.has_dcache ?
-                 (hw_info.dcache_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-    snprintf(iburst_label, sizeof(iburst_label), "%s",
-             hw_info.has_iburst ?
-                 (hw_info.iburst_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-    snprintf(dburst_label, sizeof(dburst_label), "%s",
-             hw_info.has_dburst ?
-                 (hw_info.dburst_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-    snprintf(cback_label, sizeof(cback_label), "%s",
-             hw_info.has_copyback ?
-                 (hw_info.copyback_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-    snprintf(super_scalar_label, sizeof(super_scalar_label), "%s",
-             hw_info.has_super_scalar ?
-                 (hw_info.super_scalar_enabled ? get_string(MSG_BTN_ON) : get_string(MSG_BTN_OFF)) :
-                 get_string(MSG_NA));
-
-    /* Update all button pressed states */
-    set_button_pressed(BTN_ICACHE, hw_info.icache_enabled);
-    set_button_pressed(BTN_DCACHE, hw_info.dcache_enabled);
-    set_button_pressed(BTN_IBURST, hw_info.iburst_enabled);
-    set_button_pressed(BTN_DBURST, hw_info.dburst_enabled);
-    set_button_pressed(BTN_CBACK, hw_info.copyback_enabled);
-    set_button_pressed(BTN_SUPER_SCALAR, hw_info.super_scalar_enabled);
-    update_cache_button_enabled_states();
-
-    /* Redraw all cache buttons */
-    draw_cache_buttons();
-}
-
-static void show_timed_overlay(const char *message, ULONG ticks)
-{
-    struct RastPort *rp = app->rp;
-    WORD text_len = strlen(message);
-    WORD dialog_w = (text_len * 8) + 32;
-    WORD dialog_h = 28;
-    WORD dialog_x = (SCREEN_WIDTH - dialog_w) / 2;
-    WORD dialog_y = (app->screen_height - dialog_h) / 2;
-
-    SetAPen(rp, COLOR_BAR_YOU);
-    RectFill(rp, dialog_x, dialog_y,
-             dialog_x + dialog_w - 1, dialog_y + dialog_h - 1);
-
-    draw_3d_box(dialog_x, dialog_y, dialog_w, dialog_h, FALSE);
-
-    SetAPen(rp, COLOR_HIGHLIGHT);
-    SetBPen(rp, COLOR_BAR_YOU);
-    Move(rp, dialog_x + (dialog_w - text_len * 8) / 2, dialog_y + 16);
-    Text(rp, (CONST_STRPTR)message, text_len);
-
-    Delay(ticks);
-    redraw_current_view();
+    update_hardware_text();
 }
 
 /*
@@ -2627,6 +2326,13 @@ void handle_button_press(ButtonID btn_id)
             boards_view_handle_button(btn_id);
             break;
 
+        case VIEW_BOARD_DETAILS:
+            board_detail_view_handle_button(btn_id);
+            break;
+
+        case VIEW_REPORT:
+            report_view_handle_button(btn_id);
+            break;
         case VIEW_SCSI:
             scsi_view_handle_button(btn_id);
             break;
@@ -2639,17 +2345,22 @@ void handle_button_press(ButtonID btn_id)
 void handle_scrollbar_click(WORD mx __attribute__((unused)), WORD my)
 {
     Button *scrollbar_btn = find_button(BTN_SOFTWARE_SCROLLBAR);
-    SoftwareList *list = get_software_list(app->software_type);
+    ULONG rows = software_row_count();
     WORD knob_y, knob_h, travel;
     LONG max_scroll, new_scroll;
 
-    if (app->current_view != VIEW_MAIN || !scrollbar_btn ||
-        !scrollbar_btn->enabled || !list) return;
+    if (app->current_view == VIEW_REPORT) {
+        report_view_scrollbar(my);
+        return;
+    }
 
-    max_scroll = (LONG)list->count - SOFTWARE_LIST_LINES;
+    if (app->current_view != VIEW_MAIN || !scrollbar_btn ||
+        !scrollbar_btn->enabled || !rows) return;
+
+    max_scroll = (LONG)rows - SOFTWARE_LIST_LINES;
     if (max_scroll <= 0) return;
 
-    scrollbar_knob(scrollbar_btn->height, app->software_scroll, list->count,
+    scrollbar_knob(scrollbar_btn->height, app->software_scroll, rows,
                    SOFTWARE_LIST_LINES, &knob_y, &knob_h);
     travel = scrollbar_btn->height - 2 - knob_h;
     if (travel <= 0) return;
@@ -2690,6 +2401,8 @@ void handle_scrollbar_click(WORD mx __attribute__((unused)), WORD my)
  */
 void switch_to_view(ViewMode view)
 {
+    ViewMode previous = app->current_view;
+    if (previous == VIEW_REPORT && view != VIEW_REPORT) close_report_view();
     app->scrollbar_dragging = FALSE;
     app->current_view = view;
 
@@ -2707,7 +2420,8 @@ void switch_to_view(ViewMode view)
             }
             break;
         case VIEW_BOARDS:
-            app->board_scroll = 0;
+            if (previous != VIEW_BOARD_DETAILS)
+                app->board_scroll = 0;
             break;
         default:
             break;
@@ -2775,27 +2489,22 @@ static BOOL save_overlay_area(WORD x, WORD y, WORD w, WORD h)
     overlay_backup.allocated_bitmap = FALSE;
 
     if (GfxBase->LibNode.lib_Version >= 39) {
-        ULONG flags = BMF_CLEAR;
+        ULONG flags = 0;
 
         if (app->use_custom_screen)
             flags |= BMF_STANDARD;
 
         overlay_backup.bitmap = AllocBitMap(w, h, depth, flags,
                                             app->rp->BitMap);
-        if (overlay_backup.bitmap) {
-            overlay_backup.allocated_bitmap = TRUE;
-        }
-    }
-
-    if (!overlay_backup.bitmap) {
+        if (!overlay_backup.bitmap)
+            return FALSE;
+        overlay_backup.allocated_bitmap = TRUE;
+    } else {
         if (depth > 8)
             return FALSE;
 
         InitBitMap(&overlay_backup.legacy_bitmap, depth, w, h);
         overlay_backup.bitmap = &overlay_backup.legacy_bitmap;
-    }
-
-    if (!overlay_backup.allocated_bitmap) {
         for (plane = 0; plane < depth; plane++) {
             overlay_backup.legacy_bitmap.Planes[plane] = AllocRaster(w, h);
             if (!overlay_backup.legacy_bitmap.Planes[plane]) {
@@ -2846,22 +2555,20 @@ static void show_status_overlay_centered(const char *message,
     WORD text_len = strlen(message);
 
     /* Dialog dimensions and position (centered) */
-    WORD dialog_w = (text_len * 8) + 32;
+    WORD text_width = TextLength(rp, (CONST_STRPTR)message, text_len);
+    WORD dialog_w = text_width + 32;
     WORD dialog_h = 28;
     WORD dialog_x = area_x + (area_w - dialog_w) / 2;
     WORD dialog_y = area_y + (area_h - dialog_h) / 2;
 
-    save_overlay_area(dialog_x, dialog_y, dialog_w, dialog_h);
+    if (!save_overlay_area(dialog_x, dialog_y, dialog_w, dialog_h))
+        return;
 
     /* Allocate explicitly: some toolchains lose __chip hunk flags. */
     if (!blank_pointer)
         blank_pointer = AllocMem(BLANK_POINTER_SIZE, MEMF_CHIP | MEMF_CLEAR);
     if (blank_pointer)
         SetPointer(app->window, blank_pointer, 1, 16, 0, 0);
-
-    /* Draw shadow */
-    //SetAPen(rp, COLOR_BUTTON_DARK);
-    //RectFill(rp, dialog_x + 2, dialog_y + 2, dialog_x + dialog_w + 1, dialog_y + dialog_h + 1);
 
     /* Draw red background */
     SetAPen(rp, COLOR_BAR_YOU);  /* Red color */
@@ -2873,8 +2580,7 @@ static void show_status_overlay_centered(const char *message,
     /* Draw centered message */
     SetAPen(rp, COLOR_HIGHLIGHT);  /* White text in both palettes */
     SetBPen(rp, COLOR_BAR_YOU);
-    TextLength(rp, (CONST_STRPTR)message, text_len);
-    Move(rp, dialog_x + (dialog_w - text_len * 8) / 2, dialog_y + 16);
+    Move(rp, dialog_x + (dialog_w - text_width) / 2, dialog_y + 16);
     Text(rp, (CONST_STRPTR)message, text_len);
 }
 
@@ -2899,8 +2605,6 @@ static void show_speed_status_overlay(const char *message)
  */
 void hide_status_overlay(void)
 {
-    BOOL restored;
-
     if (blank_pointer) {
         ClearPointer(app->window);
         /* Let the copper switch pointers before releasing sprite data. */
@@ -2909,11 +2613,7 @@ void hide_status_overlay(void)
         blank_pointer = NULL;
     }
 
-    restored = restore_overlay_area();
-    if (!restored) {
-        /* Fallback for deep/unknown bitmaps or allocation failure. */
-        redraw_current_view();
-    }
+    restore_overlay_area();
 }
 
 /*
@@ -2923,7 +2623,7 @@ static void draw_requester_field(WORD field_x, WORD field_y, WORD field_w, WORD 
                                  const char *filename, ULONG cursor_pos)
 {
     struct RastPort *rp = app->rp;
-    WORD cursor_x;
+    WORD cursor_x, cursor_w;
     WORD max_text_w;
 
     /* Clear field interior */
@@ -2942,16 +2642,20 @@ static void draw_requester_field(WORD field_x, WORD field_y, WORD field_w, WORD 
     if (cursor_pos > 0) {
         cursor_x += TextLength(rp, (CONST_STRPTR)filename, cursor_pos);
     }
-    if (cursor_x > field_x + field_w - 10) {
-        cursor_x = field_x + field_w - 10;
+    cursor_w = TextLength(rp, filename[cursor_pos] ?
+                          (CONST_STRPTR)&filename[cursor_pos] :
+                          (CONST_STRPTR)" ", 1);
+    if (cursor_w < 1) cursor_w = 1;
+    if (cursor_x > field_x + field_w - cursor_w - 2) {
+        cursor_x = field_x + field_w - cursor_w - 2;
     }
     SetAPen(rp, COLOR_TEXT);
-    RectFill(rp, cursor_x, field_y + 2, cursor_x + 7, field_y + field_h - 3);
+    RectFill(rp, cursor_x, field_y + 2,
+             cursor_x + cursor_w - 1, field_y + field_h - 3);
     /* Draw character at cursor position in inverse */
     if (filename[cursor_pos]) {
         SetAPen(rp, COLOR_BACKGROUND);
         SetBPen(rp, COLOR_TEXT);
-        TextLength(rp, (CONST_STRPTR)&filename[cursor_pos], 1);
         Move(rp, cursor_x, field_y + 10);
         Text(rp, (CONST_STRPTR)&filename[cursor_pos], 1);
     }
@@ -3074,7 +2778,8 @@ BOOL show_filename_requester(const char *title, char *filename, ULONG filename_s
     Button ok_btn = { ok_x, btn_y, btn_w, btn_h, get_string(MSG_BTN_OK), BTN_NONE, TRUE, FALSE };
     Button cancel_btn = { cancel_x, btn_y, btn_w, btn_h, get_string(MSG_BTN_CANCEL), BTN_NONE, TRUE, FALSE };
 
-    save_overlay_area(dialog_x, dialog_y, dialog_w, dialog_h);
+    if (!save_overlay_area(dialog_x, dialog_y, dialog_w, dialog_h))
+        return FALSE;
 
     /* Initialize cursor position at end of filename */
     filename_len = strlen(filename);

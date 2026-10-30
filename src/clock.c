@@ -112,13 +112,17 @@ BOOL read_hardware_time(struct ClockData *date)
         i = hw_info.clock_type == CLOCK_RP5C01 ? 7 : 6;
         date->mday = from_bcd((fields[i + 1] << 4) | fields[i]);
         date->month = from_bcd((fields[i + 3] << 4) | fields[i + 2]);
-        year = from_bcd((fields[i + 5] << 4) | fields[i + 4]);
+        /* battclock.resource stores years since 1900, so the 4-bit
+         * tens counter holds 10-15 for 2000-2059. */
+        year = fields[i + 4] > 9 ? 0xffff :
+               fields[i + 5] * 10 + fields[i + 4];
     } else {
         return FALSE;
     }
-    if (year > 99)
+    if (year > 159)
         return FALSE;
-    /* Match AmigaOS's two-digit RTC year window: 1978 through 2077. */
+    /* Match battclock.resource: 78-159 count from 1900, and two-digit
+     * years below 78 (as other software writes them) mean 2000-2077. */
     date->year = year + (year < 78 ? 2000 : 1900);
     date->wday = 0; /* Not used for display. */
     return valid_date(date);

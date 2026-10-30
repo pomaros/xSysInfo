@@ -31,7 +31,9 @@
 #include <clib/alib_protos.h>
 
 #include "xsysinfo.h"
+#include "format.h"
 #include "drives.h"
+#include "growlist.h"
 #include "scsi.h"
 #include "gui.h"
 #include "benchmark.h"
@@ -354,7 +356,6 @@ static void bstr_to_device_name(BSTR bstr, char *name, ULONG maxlen)
 
 /* Helpers */
 static BOOL is_floppy_device(ULONG total_blocks);
-static BOOL drive_has_media_evidence(const DriveInfo *drive);
 
 #define MIN_KICK_DEVICE_VERSION 36
 
@@ -430,8 +431,10 @@ static void scan_dos_list(void)
     debug("  drives: DosList locked\n");
 
     while ((dol = MyNextDosEntry(dol, LDF_DEVICES)) != NULL) {
-        if (drive_list.count >= MAX_DRIVES) {
-            debug("  drives: MAX_DRIVES reached, skipping remaining devices\n");
+        if (!grow_list((APTR *)&drive_list.drives, &drive_list.capacity,
+                       drive_list.count, drive_list.count + 1,
+                       sizeof(DriveInfo), MAX_DRIVES)) {
+            debug("  drives: drive list full, skipping remaining devices\n");
             break;
         }
         DriveInfo *drive = &drive_list.drives[drive_list.count];
@@ -812,6 +815,12 @@ static void sort_drive_list(void)
     }
 }
 
+void free_drive_list(void)
+{
+    free_list((APTR *)&drive_list.drives, &drive_list.capacity, sizeof(DriveInfo));
+    drive_list.count = 0;
+}
+
 /*
  * Enumerate all drives
  */
@@ -819,7 +828,7 @@ void enumerate_drives(void)
 {
     debug("  drives: Starting enumeration...\n");
 
-    memset(&drive_list, 0, sizeof(drive_list));
+    free_drive_list();
     drive_page = 0;
     debug("  drives: Scan DosList...\n");
 
@@ -867,7 +876,7 @@ static BOOL is_floppy_device(ULONG total_blocks)
     return (total_blocks > 0 && total_blocks <= 7040);
 }
 
-static BOOL drive_has_media_evidence(const DriveInfo *drive)
+BOOL drive_has_media_evidence(const DriveInfo *drive)
 {
     if (!drive || drive->disk_state == DISK_NO_DISK) {
         return FALSE;
@@ -1615,27 +1624,25 @@ cleanup:
 /*
  * Draw drives data area (buttons, info panel, action buttons - no title)
  */
-static void format_drive_speed(const DriveInfo *drive, char *buffer,
+void format_drive_speed(const DriveInfo *drive, char *buffer,
                                size_t size)
 {
     if (drive->speed_measured) {
-        ULONG speed = drive->speed_bytes_sec;
-        if (speed >= 1000000) {
-            snprintf(buffer, size, "%lu.%lu MB/s",
-                     (unsigned long)(speed / 1000000),
-                     (unsigned long)((speed % 1000000) / 100000));
-        } else if (speed >= 10000) {
-            snprintf(buffer, size, "%lu KB/s",
-                     (unsigned long)(speed / 1000));
-        } else {
-            snprintf(buffer, size, "%lu B/s", (unsigned long)speed);
-        }
+        format_transfer_rate(drive->speed_bytes_sec, FALSE, buffer, size);
     } else {
         snprintf(buffer, size, "%s", get_string(MSG_DASH_PLACEHOLDER));
     }
 }
 
 static void draw_drive_value(WORD y, const char *value);
+
+static void clear_drive_values(WORD first, WORD last)
+{
+    SetAPen(app->rp, COLOR_PANEL_BG);
+    RectFill(app->rp, DRIVE_VALUE_X, first - app->rp->TxBaseline,
+             DRIVE_VALUE_MAX_X, last - app->rp->TxBaseline + app->rp->TxHeight - 1);
+}
+
 
 static void draw_drive_speed_row(void)
 {
@@ -1650,19 +1657,14 @@ static void draw_drive_speed_row(void)
     drive = &drive_list.drives[app->selected_drive];
     format_drive_speed(drive, buffer, sizeof(buffer));
 
+    clear_drive_values(175, 175);
     draw_drive_value(175, buffer);
 }
 
 static void draw_drive_value(WORD y, const char *value)
 {
     struct RastPort *rp = app->rp;
-    WORD top = y - rp->TxBaseline;
 
-    /* Clear only this font row: a taller rectangle erases the previous
-     * row's descenders with the drive view's nine-pixel line spacing. */
-    SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, DRIVE_VALUE_X, top, DRIVE_VALUE_MAX_X,
-             top + rp->TxHeight - 1);
     SetAPen(rp, COLOR_HIGHLIGHT);
     SetBPen(rp, COLOR_PANEL_BG);
     draw_text_clipped(DRIVE_VALUE_X, y, value,
@@ -1819,128 +1821,44 @@ static void draw_drive_action_buttons(void)
 
 static void draw_drives_data(BOOL full_redraw)
 {
-    struct RastPort *rp = app->rp;
-    WORD y;
-    DriveInfo *drive;
-    char buffer[64];
+    static const LocaleStringID labels[] = {
+        MSG_DISK_ERRORS,
+        MSG_UNIT_NUMBER,
+        MSG_DISK_STATE,
+        MSG_TOTAL_BLOCKS,
+        MSG_BLOCKS_USED,
+        MSG_BYTES_PER_BLOCK,
+        MSG_DISK_TYPE,
+        MSG_VOLUME_NAME,
+        MSG_DEVICE_NAME,
+        MSG_SURFACES,
+        MSG_SECTORS_PER_SIDE,
+        MSG_RESERVED_BLOCKS,
+        MSG_LOWEST_CYLINDER,
+        MSG_HIGHEST_CYLINDER,
+        MSG_NUM_BUFFERS,
+        MSG_SPEED
+    };
+    ULONG row;
 
-    /* Draw drive selection buttons on left */
     draw_drive_select_buttons();
 
     if (full_redraw) {
-        /* Draw drive info panel with 3D border */
         draw_panel(100, 28, 520, 152, NULL);
     } else {
-        draw_drive_values();
-        draw_drive_action_buttons();
-        return;
+        clear_drive_values(40, 175);
     }
-
     if (app->selected_drive < 0 || app->selected_drive >= (LONG)drive_list.count) {
-        SetAPen(rp, COLOR_TEXT);
-        Move(rp, 250, 120);
-        Text(rp, (CONST_STRPTR)get_string(MSG_DRIVES_NO_DRIVES_FOUND), strlen(get_string(MSG_DRIVES_NO_DRIVES_FOUND)));
+        draw_text(250, 120, get_string(MSG_DRIVES_NO_DRIVES_FOUND), COLOR_TEXT);
     } else {
-        drive = &drive_list.drives[app->selected_drive];
-        y = 40;
-
-        /* Number of disk errors */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->disk_errors);
-        draw_label_value(120, y, get_string(MSG_DISK_ERRORS), buffer, 224);
-        y += 9;
-
-        /* Unit number */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->unit_number);
-        draw_label_value(120, y, get_string(MSG_UNIT_NUMBER), buffer, 224);
-        y += 9;
-
-        /* Disk state */
-        if (drive->disk_state == DISK_NO_DISK) {
-            draw_label_value(120, y, get_string(MSG_DISK_STATE), get_string(MSG_DASH_PLACEHOLDER), 224);
-        } else {
-            draw_label_value(120, y, get_string(MSG_DISK_STATE),
-                             get_disk_state_string(drive->disk_state), 224);
+        if (full_redraw) {
+            for (row = 0; row < sizeof(labels) / sizeof(labels[0]); row++) {
+                draw_label_value(120, 40 + row * 9, get_string(labels[row]),
+                                 NULL, 224);
+            }
         }
-        y += 9;
-
-        /* Total blocks */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->total_blocks);
-        draw_label_value(120, y, get_string(MSG_TOTAL_BLOCKS), buffer, 224);
-        y += 9;
-
-        /* Blocks used */
-        if (drive->disk_state == DISK_NO_DISK) {
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_DASH_PLACEHOLDER));
-        } else {
-            snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->blocks_used);
-        }
-        draw_label_value(120, y, get_string(MSG_BLOCKS_USED), buffer, 224);
-        y += 9;
-
-        /* Bytes per block */
-        if (drive->disk_state == DISK_NO_DISK) {
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_DASH_PLACEHOLDER));
-        } else {
-            format_block_size_display(drive, buffer, sizeof(buffer));
-        }
-        draw_label_value(120, y, get_string(MSG_BYTES_PER_BLOCK), buffer, 224);
-        y += 9;
-
-        /* Filesystem type */
-        if (drive->disk_state == DISK_NO_DISK) {
-            draw_label_value(120, y, get_string(MSG_DISK_TYPE), get_string(MSG_DISK_NO_DISK_INSERTED), 224);
-        } else {
-            format_filesystem_display(drive, buffer, sizeof(buffer));
-            draw_label_value(120, y, get_string(MSG_DISK_TYPE),
-                             buffer, 224);
-        }
-        y += 9;
-
-        /* Volume name */
-        draw_label_value(120, y, get_string(MSG_VOLUME_NAME),
-                         (drive->disk_state == DISK_NO_DISK || !drive->volume_name[0]) ? get_string(MSG_DASH_PLACEHOLDER) : drive->volume_name, 224);
-        y += 9;
-
-        /* Device name */
-        draw_label_value(120, y, get_string(MSG_DEVICE_NAME),
-                         drive->handler_name[0] ? drive->handler_name : get_string(MSG_DASH_PLACEHOLDER), 224);
-        y += 9;
-
-        /* Surfaces */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->surfaces);
-        draw_label_value(120, y, get_string(MSG_SURFACES), buffer, 224);
-        y += 9;
-
-        /* Sectors per side */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->sectors_per_track);
-        draw_label_value(120, y, get_string(MSG_SECTORS_PER_SIDE), buffer, 224);
-        y += 9;
-
-        /* Reserved blocks */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->reserved_blocks);
-        draw_label_value(120, y, get_string(MSG_RESERVED_BLOCKS), buffer, 224);
-        y += 9;
-
-        /* Lowest cylinder */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->low_cylinder);
-        draw_label_value(120, y, get_string(MSG_LOWEST_CYLINDER), buffer, 224);
-        y += 9;
-
-        /* Highest cylinder */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->high_cylinder);
-        draw_label_value(120, y, get_string(MSG_HIGHEST_CYLINDER), buffer, 224);
-        y += 9;
-
-        /* Number of buffers */
-        snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->num_buffers);
-        draw_label_value(120, y, get_string(MSG_NUM_BUFFERS), buffer, 224);
-        y += 9;
-
-        format_drive_speed(drive, buffer, sizeof(buffer));
-        draw_label_value(120, y, get_string(MSG_SPEED), buffer, 224);
+        draw_drive_values();
     }
-
-    /* Draw bottom buttons */
     draw_drive_action_buttons();
 }
 
@@ -1963,6 +1881,10 @@ void draw_drives_view(void)
  */
 void drives_view_update_buttons(void)
 {
+    /* Button labels must outlive this function; keep the full device names
+     * in drive_list for device access. Mark labels longer than eight
+     * characters with '..' instead of displaying a different device name. */
+    static char drive_labels[DRIVES_PER_PAGE][9];
     BOOL scsi_enabled = FALSE;
     BOOL speed_enabled = FALSE;
     ULONG i, first;
@@ -1977,8 +1899,14 @@ void drives_view_update_buttons(void)
 
     for (i = first;
          i < drive_list.count && i < first + DRIVES_PER_PAGE; i++) {
+        const char *label = drive_list.drives[i].device_name;
+        if (strlen(label) > 8) {
+            snprintf(drive_labels[i - first], sizeof(drive_labels[0]),
+                     "%.6s..", label);
+            label = drive_labels[i - first];
+        }
         add_button(10, y, 70, 12,
-                   drive_list.drives[i].device_name,
+                   label,
                    (ButtonID)(BTN_DRV_DRIVE_BASE + i), TRUE);
         y += 14;
     }

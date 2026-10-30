@@ -25,8 +25,11 @@ jobs:
       - name: Mark git directory as safe
         run: git config --global --add safe.directory '*'
 
+      - name: Install native packer build dependencies
+        run: apt-get update && apt-get install -y cmake
+
       - name: Build all artifacts
-        run: make all
+        run: make all identify-release
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -36,6 +39,7 @@ jobs:
             xSysInfo
             xsysinfo-*.adf
             xsysinfo-*.lha
+            build/identify-release/release/Identify*.lha
           if-no-files-found: error
 
   release:
@@ -63,3 +67,4 @@ jobs:
             artifacts/xSysInfo
             artifacts/xsysinfo-*.adf
             artifacts/xsysinfo-*.lha
+            artifacts/build/identify-release/release/Identify*.lha

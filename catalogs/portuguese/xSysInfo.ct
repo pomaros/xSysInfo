@@ -95,7 +95,7 @@ MSG_DECODING
 Descodif.
 ;
 MSG_CARD_SLOT
-Slot de Cartão
+Slot
 ;
 MSG_VERT_HZ
 Vert Hz
@@ -155,91 +155,91 @@ MSG_REF_YOU
 Você
 ;
 MSG_START_ADDRESS
-ENDEREÇO INICIAL
+Endereço inicial
 ;
 MSG_END_ADDRESS
-ENDEREÇO FINAL
+Endereço final
 ;
 MSG_TOTAL_SIZE
-TAMANHO TOTAL
+Tamanho total
 ;
 MSG_MEMORY_TYPE
-TIPO DE MEMÓRIA
+Tipo de memória
 ;
 MSG_PRIORITY
-PRIORIDADE
+Prioridade
 ;
 MSG_LOWER_BOUND
-LIMITE INFERIOR
+Limite inferior
 ;
 MSG_UPPER_BOUND
-LIMITE SUPERIOR
+Limite superior
 ;
 MSG_FIRST_ADDRESS
-PRIMEIRO ENDEREÇO
+Primeiro endereço
 ;
 MSG_AMOUNT_FREE
-QUANTIDADE LIVRE
+Quantidade livre
 ;
 MSG_LARGEST_BLOCK
-MAIOR BLOCO
+Maior bloco
 ;
 MSG_NUM_CHUNKS
-NÚMERO DE BLOCOS
+Número de blocos
 ;
 MSG_NODE_NAME
-NOME DO NÓ
+Nome do nó
 ;
 MSG_MEMORY_SPEED
-VELOCIDADE DA MEMÓRIA
+Velocidade da memória
 ;
 MSG_DISK_ERRORS
-NÚMERO DE ERROS DE DISCO
+Número de erros de disco
 ;
 MSG_UNIT_NUMBER
-NÚMERO DE UNIDADE
+Número de unidade
 ;
 MSG_DISK_STATE
-ESTADO DO DISCO
+Estado do disco
 ;
 MSG_TOTAL_BLOCKS
-NÚMERO TOTAL DE BLOCOS
+Número total de blocos
 ;
 MSG_BLOCKS_USED
-TOTAL DE BLOCOS UTILIZADOS
+Total de blocos utilizados
 ;
 MSG_BYTES_PER_BLOCK
-BYTES POR BLOCO
+Bytes por bloco
 ;
 MSG_DISK_TYPE
-TIPO DE UNIDADE/DISCO
+Tipo de unidade/disco
 ;
 MSG_VOLUME_NAME
-NOME DO VOLUME
+Nome do volume
 ;
 MSG_DEVICE_NAME
-NOME DO DISPOSITIVO
+Nome do dispositivo
 ;
 MSG_SURFACES
-SUPERFÍCIES
+Superfícies
 ;
 MSG_SECTORS_PER_SIDE
-SECTORES POR LADO
+Sectores por lado
 ;
 MSG_RESERVED_BLOCKS
-BLOCOS RESERVADOS
+Blocos reservados
 ;
 MSG_LOWEST_CYLINDER
-CILINDRO MAIS BAIXO
+Cilindro mais baixo
 ;
 MSG_HIGHEST_CYLINDER
-CILINDRO MAIS ALTO
+Cilindro mais alto
 ;
 MSG_NUM_BUFFERS
-NÚMERO DE BUFFERS
+Número de buffers
 ;
 MSG_SPEED
-VELOCIDADE DA UNIDADE
+Velocidade da unidade
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nenhuma unidade encontrada.
@@ -586,9 +586,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Desconhecido
 ;
-MSG_EXT_INFO
-Informação adicional para A3000/4000
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -662,7 +659,7 @@ MSG_DENISE_SAGA
 SAGA
 ;
 MSG_DENISE_UNKNOWN
-Denise desconhecida
+Denise desconhec.
 ;
 MSG_AGNUS_ALICE_PAL
 Alice 8374
@@ -671,16 +668,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -881,4 +878,163 @@ Verif. parid.
 ;
 MSG_NCR_DOUBLER
 Duplic. clock
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID do chip
+;
+MSG_PCMCIA_CARD
+Cartão PCMCIA
+;
+MSG_PCMCIA_SLOT
+Slot PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Tempo acesso
+;
+MSG_AKIKO_C2P
+C2P (SO)
+;
+MSG_PPC_REVISION
+Revisão PPC
+;
+MSG_PPC_BUS
+Bus PPC MHz
+;
+MSG_PPC_RUNTIME
+Sistema PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Software
+;
+MSG_HARDWARE_TITLE
+Hardware
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Velocidade
+;
+MSG_MEMORY_TITLE
+Memória
+;
+MSG_DRIVES_TITLE
+Unidades
+;
+MSG_BOARDS_TITLE
+Placas
+;
+MSG_PROJECT_MENU
+Projeto
+;
+MSG_ABOUT
+Sobre...
+;
+MSG_ABOUT_MUI
+Sobre o MUI...
+;
+MSG_RUN_BENCHMARKS
+Executar testes
+;
+MSG_SAVE_REPORT
+Guardar relatório...
+;
+MSG_QUIT
+Sair
+;
+MSG_SETTINGS_MENU
+Definições
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Medir velocidade
+;
+MSG_SCSI_DEVICES
+Dispositivos SCSI...
+;
+MSG_CLOSE
+Fechar
+;
+MSG_RESULTS_TITLE
+Resultados
+;
+MSG_NAME
+Nome
+;
+MSG_LOCATION
+Localização
+;
+MSG_ADDRESS
+Endereço
+;
+MSG_VERSION
+Versão
+;
+MSG_SIZE
+Tamanho
+;
+MSG_DRIVE
+Unidade
+;
+MSG_VOLUME
+Volume
+;
+MSG_REPORT_SAVED
+Relatório guardado em %s
+;
+MSG_REPORT_SAVE_FAILED
+Não foi possível guardar o relatório
+;
+MSG_FONT_INVALID
+Valor FONT inválido. Use FONT=nome.tamanho.
+;
+MSG_FONT_UNAVAILABLE
+Não foi possível abrir a fonte pedida.
+;
+MSG_FONT_TOO_LARGE
+A fonte excede o limite de 8 x 8 píxeis.
+;
+MSG_FONT_FALLBACK
+A usar topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Relatório...
+;
+MSG_REPORT_TITLE
+Relatório do sistema
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Breve
+;
+MSG_REPORT_FULL
+Completo
+;
+MSG_REPORT_SAVE_AS
+Guardar como...
+;
+MSG_REPORT_FAILED
+Não foi possível criar a pré-visualização
+;
+MSG_BTN_REPORT
+RELAT.
+;
+MSG_NETWORK
+Rede
+;
+MSG_NOT_RUNNING
+inativo
 ;

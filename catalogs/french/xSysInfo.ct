@@ -171,93 +171,93 @@ Vous
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-ADRESSE DEBUT
+Adresse debut
 ;
 MSG_END_ADDRESS
-ADRESSE FIN
+Adresse fin
 ;
 MSG_TOTAL_SIZE
-TAILLE TOTALE
+Taille totale
 ;
 MSG_MEMORY_TYPE
-TYPE DE MEMOIRE
+Type de memoire
 ;
 MSG_PRIORITY
-PRIORITE
+Priorite
 ;
 MSG_LOWER_BOUND
-LIMITE BASSE
+Limite basse
 ;
 MSG_UPPER_BOUND
-LIMITE HAUTE
+Limite haute
 ;
 MSG_FIRST_ADDRESS
-PREMIERE ADRESSE
+Premiere adresse
 ;
 MSG_AMOUNT_FREE
-ESPACE LIBRE
+Espace libre
 ;
 MSG_LARGEST_BLOCK
-PLUS GRAND BLOC
+Plus grand bloc
 ;
 MSG_NUM_CHUNKS
-NOMBRE DE FRAGMENTS
+Nombre de fragments
 ;
 MSG_NODE_NAME
-NOM DU NOEUD
+Nom du noeud
 ;
 MSG_MEMORY_SPEED
-VITESSE MEMOIRE
+Vitesse memoire
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-NOMBRE D'ERREURS DISQUE
+Nombre d'erreurs disque
 ;
 MSG_UNIT_NUMBER
-NUMERO D'UNITE
+Numero d'unite
 ;
 MSG_DISK_STATE
-ETAT DU DISQUE
+Etat du disque
 ;
 MSG_TOTAL_BLOCKS
-NOMBRE TOTAL DE BLOCS
+Nombre total de blocs
 ;
 MSG_BLOCKS_USED
-BLOCS UTILISES
+Blocs utilises
 ;
 MSG_BYTES_PER_BLOCK
-OCTETS PAR BLOC
+Octets par bloc
 ;
 MSG_DISK_TYPE
-TYPE LECTEUR/DISQUE
+Type lecteur/disque
 ;
 MSG_VOLUME_NAME
-NOM DU VOLUME
+Nom du volume
 ;
 MSG_DEVICE_NAME
-NOM DU PERIPHERIQUE
+Nom du peripherique
 ;
 MSG_SURFACES
-SURFACES
+Surfaces
 ;
 MSG_SECTORS_PER_SIDE
-SECTEURS PAR FACE
+Secteurs par face
 ;
 MSG_RESERVED_BLOCKS
-BLOCS RESERVES
+Blocs reserves
 ;
 MSG_LOWEST_CYLINDER
-CYLINDRE LE PLUS BAS
+Cylindre le plus bas
 ;
 MSG_HIGHEST_CYLINDER
-CYLINDRE LE PLUS HAUT
+Cylindre le plus haut
 ;
 MSG_NUM_BUFFERS
-NOMBRE DE TAMPONS
+Nombre de tampons
 ;
 MSG_SPEED
-VITESSE LECTEUR
+Vitesse lecteur
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Aucun lecteur trouve.
@@ -632,9 +632,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Inconnu
 ;
-MSG_EXT_INFO
-Infos etendues A3000/4000
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,163 @@ Vérif. parité
 ;
 MSG_NCR_DOUBLER
 Doubleur
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID puce
+;
+MSG_PCMCIA_CARD
+Carte PCMCIA
+;
+MSG_PCMCIA_SLOT
+Port PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Temps accès
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+Révision PPC
+;
+MSG_PPC_BUS
+Bus PPC MHz
+;
+MSG_PPC_RUNTIME
+Système PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Logiciels
+;
+MSG_HARDWARE_TITLE
+Matériel
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Vitesse
+;
+MSG_MEMORY_TITLE
+Mémoire
+;
+MSG_DRIVES_TITLE
+Lecteurs
+;
+MSG_BOARDS_TITLE
+Cartes
+;
+MSG_PROJECT_MENU
+Projet
+;
+MSG_ABOUT
+À propos...
+;
+MSG_ABOUT_MUI
+À propos de MUI...
+;
+MSG_RUN_BENCHMARKS
+Lancer les tests
+;
+MSG_SAVE_REPORT
+Enregistrer le rapport...
+;
+MSG_QUIT
+Quitter
+;
+MSG_SETTINGS_MENU
+Réglages
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Mesurer la vitesse
+;
+MSG_SCSI_DEVICES
+Périphériques SCSI...
+;
+MSG_CLOSE
+Fermer
+;
+MSG_RESULTS_TITLE
+Résultats
+;
+MSG_NAME
+Nom
+;
+MSG_LOCATION
+Emplacement
+;
+MSG_ADDRESS
+Adresse
+;
+MSG_VERSION
+Version
+;
+MSG_SIZE
+Taille
+;
+MSG_DRIVE
+Lecteur
+;
+MSG_VOLUME
+Volume
+;
+MSG_REPORT_SAVED
+Rapport enregistré dans %s
+;
+MSG_REPORT_SAVE_FAILED
+Impossible d'enregistrer le rapport
+;
+MSG_FONT_INVALID
+Paramètre FONT invalide. Format : FONT=nom.taille.
+;
+MSG_FONT_UNAVAILABLE
+Impossible d'ouvrir la police demandée.
+;
+MSG_FONT_TOO_LARGE
+La police dépasse la limite de 8 x 8 pixels.
+;
+MSG_FONT_FALLBACK
+Utilisation de topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Rapport...
+;
+MSG_REPORT_TITLE
+Rapport système
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Bref
+;
+MSG_REPORT_FULL
+Complet
+;
+MSG_REPORT_SAVE_AS
+Enregistrer sous...
+;
+MSG_REPORT_FAILED
+Impossible de créer l'aperçu du rapport
+;
+MSG_BTN_REPORT
+RAPPORT
+;
+MSG_NETWORK
+Réseau
+;
+MSG_NOT_RUNNING
+inactif
 ;

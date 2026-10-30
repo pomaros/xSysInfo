@@ -28,6 +28,12 @@ MMU_DIR = $(DOWNLOAD_DIR)/MuManual
 MMU_LIB_DIR = $(DOWNLOAD_DIR)/MMULib/Libs
 MMU_LIB_NAMES = mmu 68020 68030 68040 68060
 MMU_LIBS = $(addprefix $(MMU_LIB_DIR)/,$(addsuffix .library,$(MMU_LIB_NAMES)))
+# The floppy carries MMULib's default MMU-Configuration plus GVPInit, which
+# keeps 040/060 GVP boards from bursting into Zorro II space. GVPInit only
+# acts on the GVP boards it finds through expansion.library.
+MMU_GVPINIT = $(DOWNLOAD_DIR)/MMULib/Install/GVPInit
+MMU_CONFIG = $(DOWNLOAD_DIR)/MMULib/EnvArc/MMU-Configuration
+MMU_FILES = $(MMU_LIBS) $(MMU_GVPINIT) $(MMU_CONFIG)
 FD2PRAGMA_TYPES = $(HOME)/.fd2pragma.types
 
 # Include paths for the downloaded developer files
@@ -35,9 +41,13 @@ IDENTIFY_INC = 3rdparty/identify/reference
 MMU_INC = $(MMU_DIR)/Include
 IDENTIFY_BUILD_DIR = build/identify
 IDENTIFY_LIBRARY = $(IDENTIFY_BUILD_DIR)/identify.library_000
+IDENTIFY_RELEASE_BUILD_DIR = build/identify-release
+IDENTIFY_RELEASE_SOURCES = src include reference locale distribution docs \
+                          makefile update-pci.py LICENSE.txt README.md
+MUI_INC ?= $(abspath $(NDK_PATH)/../include)
 OPENPCI_DIR = $(DOWNLOAD_DIR)/openpci68k
 OPENPCI_INC = $(OPENPCI_DIR)/Include
-OPENPCI_SDK_FILES = $(addprefix $(OPENPCI_INC)/libraries/,openpci.i pcitags.i pcimemory.i)
+OPENPCI_SDK_FILES = $(addprefix $(OPENPCI_INC)/libraries/,openpci.i pcitags.i pcimemory.i openpci.h)
 
 # Identify embeds a small WarpUP routine, assembled even in its 68000 build.
 VASM_PPC_REV = 291f6f08226c8843711e1319864526e6cd57ce06
@@ -46,6 +56,12 @@ VASM_PPC_MD5 = ec476359c4d400a443f23245baf977f0
 VASM_PPC_DIR = build/vasm-$(VASM_PPC_REV)
 VASM_PPC ?= $(or $(shell command -v vasmppc_std 2>/dev/null),$(abspath $(VASM_PPC_DIR)/vasmppc_std))
 HOST_CC ?= cc
+HOST_CXX ?= c++
+CMAKE ?= cmake
+LPACKER_DIR = 3rdparty/L-Packer
+LPACKER_BUILD_DIR = build/lpacker
+LPACKER = $(LPACKER_BUILD_DIR)/L-Packer
+DISK_FILES_DIR = build/floppy
 
 #LTO ?= -flto=auto
 CFLAGS = -Os -m68000 -mtune=68020-60 -Wa,-m68881 -msoft-float -noixemul -Wall -Wextra \
@@ -62,24 +78,43 @@ LIBS = -lamiga -lgcc
 
 # Source files
 SRCS = src/main.c \
+       src/debug.c \
        src/gui.c \
+       src/format.c \
+       src/font.c \
+       src/display.c \
        src/battmem.c \
        src/hardware.c \
+       src/rom.c \
+       src/ppc.c \
        src/wdprobe.c \
+       src/probeclock.c \
        src/benchmark.c \
        src/busclock.c \
        src/clock.c \
        src/dhry_1.c \
        src/dhry_2.c \
+       src/growlist.c \
        src/memory.c \
        src/drives.c \
        src/scsi.c \
        src/boards.c \
+       src/boards_detail.c \
        src/software.c \
        src/cache.c \
+       src/report_view.c \
        src/print.c \
        src/which.c \
        src/locale.c
+
+# Runtime selection remains opt-in. MUI=0 omits the frontend completely.
+MUI ?= 1
+ifeq ($(MUI),1)
+SRCS += src/mui_gui.c
+src/main.o: CFLAGS += -DXSYSINFO_MUI
+src/mui_gui.o: CFLAGS += -I$(MUI_INC)
+endif
+MUI_STAMP = build/mui-config
 
 ASM_SRCS = src/cpu.S src/berr_trap.S
 TINYSETPATCH_DIR = 3rdparty/TinySetPatch
@@ -89,6 +124,8 @@ STACK = Stack
 STACK_SRC = src/Stack.c
 STACK_OBJ = src/Stack.o
 STACK_CFLAGS = $(filter-out -flto%,$(CFLAGS)) -fno-lto
+LOADING_LOADER = xSysInfoLoader
+LOADING_CFLAGS = -Os -m68000 -noixemul -Wall -Wextra
 
 OBJS = $(SRCS:.c=.o)
 
@@ -100,7 +137,7 @@ ASM_OBJS = $(ASM_SRCS:.S=.o)
 
 TARGET = xSysInfo
 
-.PHONY: all clean identify identify-library mmu catalogs lha TinySetPatch
+.PHONY: all clean identify identify-library identify-release mmu catalogs lha TinySetPatch
 
 # FlexCat uses the Unix target on both Linux and macOS.
 FLEXCAT_BIN = 3rdparty/flexcat/src/bin_unix/flexcat
@@ -118,7 +155,14 @@ $(VERSION_STAMP): FORCE_VERSION
 		'$(PROG_VERSION)' '$(PROG_REVISION)' > $@.tmp
 	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
 
-$(OBJS) $(STACK_OBJ): $(VERSION_STAMP)
+$(OBJS) $(STACK_OBJ) src/loading.o: $(VERSION_STAMP)
+
+$(MUI_STAMP): FORCE_VERSION
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(MUI)' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
+
+src/main.o $(TARGET): $(MUI_STAMP)
 
 # FlexCat build - only when binary doesn't exist
 $(FLEXCAT_BIN):
@@ -176,22 +220,25 @@ CATALOG_LANGS = german:deutsch french:français italian:italiano \
 		turkish:türkçe polish:polski portuguese:português \
 		hungarian:magyar spanish:español
 
-# Build all catalogs
+# Build all catalogs. FlexCat returns 5 for warnings, including untranslated
+# new messages; those entries use the built-in English fallback at runtime.
 catalogs: $(FLEXCAT_BIN)
-	@for mapping in $(CATALOG_LANGS); do \
+	@set -e; for mapping in $(CATALOG_LANGS); do \
 		src=$${mapping%%:*}; \
 		lang=$${mapping##*:}; \
 		mkdir -p "$(CATALOG_DIR)/$$lang"; \
 		echo "  CATALOG $$lang"; \
-		$(FLEXCAT_BIN) $(CATALOG_DESC) "catalogs/$$src/xSysInfo.ct" CATALOG "$(CATALOG_DIR)/$$lang/xSysInfo.catalog"; \
+		$(FLEXCAT_BIN) $(CATALOG_DESC) "catalogs/$$src/xSysInfo.ct" CATALOG "$(CATALOG_DIR)/$$lang/xSysInfo.catalog" || test $$? -eq 5; \
 	done
 
 # LHA archive creation
 LHA_NAME = xsysinfo-$(FULL_VERSION).lha
-LHA_DIR = xSysInfo-$(FULL_VERSION)
+# Classic Amiga filesystems allow 30 characters, including the .info suffix.
+# Keep git build details in the archive filename; mark development drawers dev.
+LHA_DIR = xSysInfo-$(firstword $(subst -, ,$(FULL_VERSION)))$(if $(findstring -g,$(FULL_VERSION)),dev)
 LHA_OPTS := $(shell if lha 2>&1 | grep 'archive-kanji-code' | grep -q 'latin1'; then echo '--system-kanji-code=utf8 --archive-kanji-code=latin1'; fi)
 
-lha: $(TARGET) TinySetPatch catalogs xSysInfo.readme
+lha: $(TARGET) TinySetPatch identify-library catalogs xSysInfo.readme docs/Install docs/Install.info docs/xSysInfo.info docs/readme.txt.info docs/dir.info
 	@echo "  LHA   $(LHA_NAME)"
 	@rm -rf $(LHA_DIR)
 	@mkdir -p $(LHA_DIR)
@@ -200,13 +247,23 @@ lha: $(TARGET) TinySetPatch catalogs xSysInfo.readme
 	@awk -v version="$(FULL_VERSION)" \
 		'{ sub(/\[VERSION\]/, version); print }' \
 		xSysInfo.readme > $(LHA_DIR)/readme.txt
+	@cp docs/readme.txt.info $(LHA_DIR)/
 	@cp docs/xSysInfo.info $(LHA_DIR)/
+	@awk -v version="$(FULL_VERSION)" \
+		'{ gsub(/\[VERSION\]/, version); print }' \
+		docs/Install > $(LHA_DIR)/Install
+	@cp docs/Install.info $(LHA_DIR)/
 	@cp LICENSE $(LHA_DIR)/
+	@cp 3rdparty/identify/LICENSE.txt $(LHA_DIR)/Identify.LICENSE
+	@mkdir -p $(LHA_DIR)/Libs
+	@cp $(IDENTIFY_LIBRARY) $(LHA_DIR)/Libs/identify.library
 	@for catalog in $(CATALOG_DIR)/*/xSysInfo.catalog; do \
 		lang=$$(basename $$(dirname "$$catalog")); \
-		cp "$$catalog" "$(LHA_DIR)/xSysInfo_$$lang.catalog"; \
+		mkdir -p "$(LHA_DIR)/Catalogs/$$lang"; \
+		cp "$$catalog" "$(LHA_DIR)/Catalogs/$$lang/xSysInfo.catalog"; \
 	done
 	@cp docs/dir.info $(LHA_DIR).info
+	@rm -f $(LHA_NAME)
 	@lha aqo5 $(LHA_OPTS) $(LHA_NAME) $(LHA_DIR) $(LHA_DIR).info
 	@rm -rf $(LHA_DIR) $(LHA_DIR).info
 	@echo "Created $(LHA_NAME)"
@@ -229,7 +286,16 @@ $(STACK_OBJ): $(STACK_SRC)
 	@echo "  CC    $@"
 	@$(CC) $(STACK_CFLAGS) -c -o $@ $<
 
-$(OBJS): src/%.o: src/%.c src/xsysinfo.h $(IDENTIFY_HEADERS) $(MMU_HEADERS)
+src/loading.o: src/loading.c src/loading.h Makefile
+	@echo "  CC    $@"
+	@$(CC) $(LOADING_CFLAGS) -DXSYSINFO_VERSION='"$(FULL_VERSION)"' -c -o $@ $<
+
+$(LOADING_LOADER): src/loading.o
+	@echo "  LINK  $@"
+	@$(CC) -nostartfiles -noixemul -o $@ $^ -lamiga
+	@$(STRIP) $@
+
+$(OBJS): src/%.o: src/%.c src/xsysinfo.h src/debug.h $(IDENTIFY_HEADERS) $(MMU_HEADERS)
 	@echo "  CC    $@"
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -239,7 +305,10 @@ $(BENCH_OBJS): CFLAGS += -O2
 $(DHRY_OBJS): CFLAGS += -falign-functions=16 -falign-loops=16 -fno-lto
 $(DHRY_OBJS): src/dhry.h Makefile
 src/benchmark.o: src/dhry.h
+src/probeclock.o src/benchmark.o src/wdprobe.o: src/probeclock.h
+src/probeclock.o: src/hardware.h src/cpu.h
 src/drives.o src/print.o src/main.o src/gui.o: src/drives.h
+src/main.o: src/loading.h
 
 $(ASM_OBJS): src/%.o: src/%.S
 	@echo "  ASM   $@"
@@ -247,33 +316,49 @@ $(ASM_OBJS): src/%.o: src/%.S
 
 clean:
 	@echo "  CLEAN"
-	@rm -f $(OBJS) $(ASM_OBJS) $(STACK_OBJ) $(TARGET) TinySetPatch $(STACK)
-	@rm -rf $(CATALOG_DIR)
-	@rm -rf $(PCI_BUILD_DIR) $(IDENTIFY_BUILD_DIR)
-	@rm -f $(VERSION_STAMP)
+	@rm -f $(OBJS) $(ASM_OBJS) $(STACK_OBJ) src/loading.o \
+		$(TARGET) TinySetPatch $(STACK) \
+		$(LOADING_LOADER)
+	@rm -rf $(CATALOG_DIR) $(LPACKER_BUILD_DIR) $(DISK_FILES_DIR)
+	@rm -rf $(PCI_BUILD_DIR) $(IDENTIFY_BUILD_DIR) $(IDENTIFY_RELEASE_BUILD_DIR)
+	@rm -f $(VERSION_STAMP) $(MUI_STAMP) src/mui_gui.o
 	@rm -f xsysinfo-*.lha
 	@$(MAKE) -s -C 3rdparty/flexcat clean
 	@$(MAKE) -s -C 3rdparty/identify clean
 	@rm -rf $(MMU_DIR) $(DOWNLOAD_DIR)/MMULib
 
 # Dependencies
+src/gui.o src/format.o src/mui_gui.o src/boards.o src/boards_detail.o: src/format.h src/cache.h
+src/gui.o src/boards_detail.o: src/boards_detail.h
+src/format.o src/boards_detail.o: src/boards.h
+src/boards_detail.o: src/xsysinfo.h src/gui.h src/locale_str.h
+src/main.o src/display.o src/mui_gui.o: src/display.h
+src/display.o: src/loading.h
+src/main.o src/mui_gui.o: src/mui_gui.h
+src/format.o: src/hardware.h src/software.h src/memory.h src/benchmark.h src/clock.h src/wdprobe.h src/locale_str.h
+src/mui_gui.o: src/hardware.h src/software.h src/memory.h src/drives.h src/boards.h src/scsi.h src/benchmark.h src/clock.h src/print.h src/locale_str.h
 $(OBJS): src/battmem.h
 src/main.o src/gui.o: src/clock.h
 src/clock.o: src/clock.c src/clock.h src/hardware.h
 src/main.o: src/main.c src/xsysinfo.h src/gui.h src/hardware.h src/which.h src/software.h src/memory.h src/boards.h src/benchmark.h src/busclock.h src/locale_str.h
 src/gui.o: src/gui.c src/bayer-16x16.c src/xsysinfo.h src/gui.h src/hardware.h src/benchmark.h src/software.h src/memory.h src/locale_str.h
 src/hardware.o: src/hardware.c src/xsysinfo.h src/hardware.h src/benchmark.h
+src/main.o src/font.o: src/font.h src/locale_str.h
+src/hardware.o src/rom.o: src/rom.h
+src/hardware.o src/wdprobe.o: src/berr_trap.h
+src/ppc.o: src/hardware.h
 src/wdprobe.o: src/wdprobe.c src/wdprobe.h src/hardware.h src/locale_str.h
 src/main.o src/gui.o src/hardware.o src/print.o: src/wdprobe.h
 src/benchmark.o: src/benchmark.c src/xsysinfo.h src/benchmark.h src/hardware.h
 src/busclock.o: src/busclock.c src/busclock.h src/hardware.h src/cpu.h src/debug.h
+src/growlist.o: src/growlist.c src/growlist.h
 src/memory.o: src/memory.c src/xsysinfo.h src/memory.h src/hardware.h src/locale_str.h
 src/drives.o: src/drives.c src/xsysinfo.h src/drives.h src/scsi.h src/hardware.h src/locale_str.h
 src/scsi.o: src/scsi.c src/xsysinfo.h src/scsi.h src/gui.h src/locale_str.h
 src/boards.o: src/boards.c src/xsysinfo.h src/boards.h src/locale_str.h
 src/software.o: src/software.c src/xsysinfo.h src/software.h src/hardware.h src/locale_str.h
 src/cache.o: src/cache.c src/xsysinfo.h src/cache.h src/hardware.h
-src/print.o: src/print.c src/xsysinfo.h src/print.h src/hardware.h src/software.h src/memory.h
+src/print.o: src/print.c src/xsysinfo.h src/print.h src/hardware.h src/software.h src/memory.h src/format.h src/which.h src/locale_str.h
 src/which.o: src/which.c src/xsysinfo.h src/which.h src/hardware.h src/boards.h src/software.h src/memory.h
 src/locale.o: src/locale.c src/xsysinfo.h src/locale_str.h
 src/dhry_1.o: src/dhry_1.c src/dhry.h
@@ -395,7 +480,7 @@ $(MU_MANUAL_LHA): | $(DOWNLOAD_DIR)
 	fi
 # Extract individual MMU files once, retaining the archives' directory layout.
 # Refresh timestamps because archive members predate the downloaded archive.
-$(MMU_LIBS): $(MMULIB_LHA)
+$(MMU_FILES): $(MMULIB_LHA)
 	@echo "  UNPACK $@"
 	@mkdir -p $(dir $@)
 	@lha xqfw=$(DOWNLOAD_DIR) $< $(patsubst $(DOWNLOAD_DIR)/%,%,$@)
@@ -417,15 +502,29 @@ $(OPENPCI_SDK_FILES): $(OPENPCI_LHA)
 # on every floppy. Let Identify's makefile handle incremental dependencies.
 identify-library: $(FLEXCAT_BIN) $(MMU_SDK_FILES) $(OPENPCI_SDK_FILES) $(PCI_IDS) $(VASM_PPC)
 	@echo "  BUILD identify.library (68000)"
-	@$(MAKE) -s -C 3rdparty/identify \
+	@PATH="$(dir $(VASM_PPC)):$(dir $(abspath $(FLEXCAT_BIN))):$(PATH)" \
+		$(MAKE) -s -C 3rdparty/identify \
 		OBJP="$(abspath $(IDENTIFY_BUILD_DIR))" \
 		NDK_I="$(NDK_PATH)" NDK_H="$(NDK_PATH)" NDK_LIB="$(NDK_LIB_PATH)" \
 		AMIGA_INCLUDES="$(abspath $(MMU_INC)) $(abspath $(OPENPCI_INC))" \
-		PATH="$(dir $(VASM_PPC)):$(dir $(abspath $(FLEXCAT_BIN))):$(PATH)" \
 		"$(abspath $(IDENTIFY_LIBRARY))"
 
+# Identify's release target cleans before building and modifies generated
+# source files. Use a private copy and serialize its clean/all prerequisites.
+identify-release: $(FLEXCAT_BIN) $(MMU_SDK_FILES) $(OPENPCI_SDK_FILES) $(PCI_IDS) $(VASM_PPC)
+	@echo "  BUILD Identify release packages"
+	@rm -rf $(IDENTIFY_RELEASE_BUILD_DIR)
+	@mkdir -p $(IDENTIFY_RELEASE_BUILD_DIR)/pciids
+	@cp -R $(addprefix 3rdparty/identify/,$(IDENTIFY_RELEASE_SOURCES)) $(IDENTIFY_RELEASE_BUILD_DIR)/
+	@cp $(PCI_IDS) $(IDENTIFY_RELEASE_BUILD_DIR)/pciids/
+	@PATH="$(dir $(VASM_PPC)):$(dir $(abspath $(FLEXCAT_BIN))):$(PATH)" \
+		$(MAKE) -s -j1 -C $(IDENTIFY_RELEASE_BUILD_DIR) \
+		NDK_I="$(NDK_PATH)" NDK_H="$(NDK_PATH)" NDK_LIB="$(NDK_LIB_PATH)" \
+		AMIGA_INCLUDES="$(abspath $(MMU_INC)) $(abspath $(OPENPCI_INC)) $(MUI_INC)" \
+		release
+
 # Download and prepare libraries and developer files.
-download-libs: $(OPENPCI_LHA) $(MMU_LIBS) $(MMU_SDK_FILES)
+download-libs: $(OPENPCI_LHA) $(MMU_FILES) $(MMU_SDK_FILES)
 	@mkdir -p 3rdparty/identify/build
 	# Extract OpenPCI library
 	@echo "  UNPACK $(OPENPCI_LHA)"
@@ -443,24 +542,53 @@ TinySetPatch: $(TINYSETPATCH_SRC) $(TINYSETPATCH_DIR)/Makefile Makefile
 		VASM=$(VASM) NDK_PATH="$(NDK_PATH)"
 	@cp $(TINYSETPATCH_BIN) $@
 
-disk: $(TARGET) download-libs identify-library $(PCI_DB) TinySetPatch $(STACK)
+# Keep the host packer current when its submodule changes.
+.PHONY: lpacker
+lpacker:
+	@$(CMAKE) -S $(LPACKER_DIR) -B $(LPACKER_BUILD_DIR) \
+		-DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$(HOST_CC)" \
+		-DCMAKE_CXX_COMPILER="$(HOST_CXX)"
+	+@$(CMAKE) --build $(LPACKER_BUILD_DIR)
+
+# Pack copies only: the LHA and standalone program use the original files.
+disk: $(TARGET) download-libs identify-library $(PCI_DB) TinySetPatch $(STACK) \
+	$(LOADING_LOADER) lpacker
+	@mkdir -p $(DISK_FILES_DIR)/Libs
+	@$(LPACKER) $(TARGET) $(DISK_FILES_DIR)/$(TARGET) -zx0
+	@$(LPACKER) $(IDENTIFY_LIBRARY) $(DISK_FILES_DIR)/Libs/identify.library -library -zx0
+	@$(LPACKER) 3rdparty/identify/build/openpci.library $(DISK_FILES_DIR)/Libs/openpci.library -library -zx0
+	@set -e; for lib in $(MMU_LIB_NAMES); do \
+		$(LPACKER) $(MMU_LIB_DIR)/$$lib.library \
+			$(DISK_FILES_DIR)/Libs/$$lib.library -library -zx0; \
+	done
+	@{ cat $(MMU_CONFIG); \
+		printf '\n; Keep affected GVP 040/060 boards from bursting into Zorro II space.\n'; \
+		printf 'GVPInit\n'; } > $(DISK_FILES_DIR)/MMU-Configuration
 	@echo "  DISK"
 	@xdftool $(DISK) format "$(DISK_TITLE)"
-	@xdftool $(DISK) write $(TARGET) $(TARGET)
+	@xdftool $(DISK) write $(DISK_FILES_DIR)/$(TARGET) $(TARGET)
 	@xdftool $(DISK) write docs/$(TARGET).info $(TARGET).info
 	@xdftool $(DISK) write docs/Disk.info Disk.info
 	@xdftool $(DISK) makedir Libs
-	@xdftool $(DISK) write $(IDENTIFY_LIBRARY) Libs/identify.library
-	@xdftool $(DISK) write 3rdparty/identify/build/openpci.library Libs/openpci.library
-	@for lib in $(MMU_LIB_NAMES); do \
-		xdftool $(DISK) write $(MMU_LIB_DIR)/$$lib.library Libs/$$lib.library; \
+	@set -e; for lib in identify openpci $(MMU_LIB_NAMES); do \
+		xdftool $(DISK) write $(DISK_FILES_DIR)/Libs/$$lib.library Libs/$$lib.library; \
 	done
+	@xdftool $(DISK) makedir Libs/mmu
+	@xdftool $(DISK) write $(MMU_GVPINIT) Libs/mmu/GVPInit
+	@xdftool $(DISK) makedir Prefs
+	@xdftool $(DISK) makedir Prefs/Env-Archive
+	@xdftool $(DISK) write $(DISK_FILES_DIR)/MMU-Configuration Prefs/Env-Archive/MMU-Configuration
 	@xdftool $(DISK) makedir S
 	@xdftool $(DISK) write Startup-Sequence S/Startup-Sequence
 	@xdftool $(DISK) write $(PCI_DB) S/pci.db
 	@xdftool $(DISK) makedir C
 	@xdftool $(DISK) write $(STACK) C/Stack
 	@xdftool $(DISK) write TinySetPatch C/TinySetPatch
+	@xdftool $(DISK) write $(LOADING_LOADER) C/$(LOADING_LOADER)
 	@xdftool $(DISK) boot install
 	@xdftool $(DISK) info
 	@ln -sf $(DISK) xsysinfo.adf
+
+src/main.o src/gui.o src/report_view.o: src/report_view.h
+src/main.o src/gui.o src/mui_gui.o src/report_view.o src/print.o: src/print.h
+src/report_view.o: src/gui.h src/locale_str.h

@@ -29,6 +29,9 @@ typedef struct {
     UWORD product_id;
     BoardType board_type;
     ULONG serial_number;
+    UWORD diagnostic_vector;
+    UBYTE autoconfig_type;
+    UBYTE autoconfig_flags;
     char product_name[64];
     char manufacturer_name[64];
     char size_string[16];       /* Human-readable size */
@@ -36,10 +39,11 @@ typedef struct {
     char detail_string[32];     /* Serial number or PCI class */
 } BoardInfo;
 
-/* Board list */
+/* Board list, allocated to fit its boards */
 typedef struct {
-    BoardInfo boards[MAX_BOARDS];
+    BoardInfo *boards;
     ULONG count;
+    ULONG capacity;
 } BoardList;
 
 /* Global board list */
@@ -47,6 +51,7 @@ extern BoardList board_list;
 
 /* Function prototypes */
 void enumerate_boards(void);
+void free_board_list(void);
 
 /* Helper functions */
 const char *get_board_type_string(BoardType type);

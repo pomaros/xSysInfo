@@ -171,93 +171,93 @@ Ty
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-ADRES POCZATKOWY
+Adres poczatkowy
 ;
 MSG_END_ADDRESS
-ADRES KONCOWY
+Adres koncowy
 ;
 MSG_TOTAL_SIZE
-CALKOWITY ROZMIAR
+Calkowity rozmiar
 ;
 MSG_MEMORY_TYPE
-TYP PAMIECI
+Typ pamieci
 ;
 MSG_PRIORITY
-PRIORYTET
+Priorytet
 ;
 MSG_LOWER_BOUND
-DOLNA GRANICA
+Dolna granica
 ;
 MSG_UPPER_BOUND
-GORNA GRANICA
+Gorna granica
 ;
 MSG_FIRST_ADDRESS
-PIERWSZY ADRES
+Pierwszy adres
 ;
 MSG_AMOUNT_FREE
-WOLNA PAMIEC
+Wolna pamiec
 ;
 MSG_LARGEST_BLOCK
-NAJWIEKSZY BLOK
+Najwiekszy blok
 ;
 MSG_NUM_CHUNKS
-LICZBA FRAGMENTOW
+Liczba fragmentow
 ;
 MSG_NODE_NAME
-NAZWA WEZLA
+Nazwa wezla
 ;
 MSG_MEMORY_SPEED
-SZYBKOSC PAMIECI
+Szybkosc pamieci
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-LICZBA BLEDOW DYSKU
+Liczba bledow dysku
 ;
 MSG_UNIT_NUMBER
-NUMER JEDNOSTKI
+Numer jednostki
 ;
 MSG_DISK_STATE
-STAN DYSKU
+Stan dysku
 ;
 MSG_TOTAL_BLOCKS
-CALKOWITA LICZBA BLOKOW
+Calkowita liczba blokow
 ;
 MSG_BLOCKS_USED
-UZYTE BLOKI
+Uzyte bloki
 ;
 MSG_BYTES_PER_BLOCK
-BAJTOW NA BLOK
+Bajtow na blok
 ;
 MSG_DISK_TYPE
-TYP NAPEDU/DYSKU
+Typ napedu/dysku
 ;
 MSG_VOLUME_NAME
-NAZWA WOLUMENU
+Nazwa wolumenu
 ;
 MSG_DEVICE_NAME
-NAZWA URZADZENIA
+Nazwa urzadzenia
 ;
 MSG_SURFACES
-POWIERZCHNIE
+Powierzchnie
 ;
 MSG_SECTORS_PER_SIDE
-SEKTOROW NA STRONE
+Sektorow na strone
 ;
 MSG_RESERVED_BLOCKS
-ZAREZERWOWANE BLOKI
+Zarezerwowane bloki
 ;
 MSG_LOWEST_CYLINDER
-NAJNIZSZY CYLINDER
+Najnizszy cylinder
 ;
 MSG_HIGHEST_CYLINDER
-NAJWYZSZY CYLINDER
+Najwyzszy cylinder
 ;
 MSG_NUM_BUFFERS
-LICZBA BUFOROW
+Liczba buforow
 ;
 MSG_SPEED
-SZYBKOSC NAPEDU
+Szybkosc napedu
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nie znaleziono napedow.
@@ -632,9 +632,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Nieznany
 ;
-MSG_EXT_INFO
-Rozsz. info A3000/4000
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,163 @@ Parzysto¶æ
 ;
 MSG_NCR_DOUBLER
 Podw. zegara
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID uk³adu
+;
+MSG_PCMCIA_CARD
+Karta PCMCIA
+;
+MSG_PCMCIA_SLOT
+Slot PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Czas dostêpu
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+Rewizja PPC
+;
+MSG_PPC_BUS
+Szyna PPC MHz
+;
+MSG_PPC_RUNTIME
+System PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Oprogramowanie
+;
+MSG_HARDWARE_TITLE
+Sprzêt
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Szybko¶æ
+;
+MSG_MEMORY_TITLE
+Pamiêæ
+;
+MSG_DRIVES_TITLE
+Napêdy
+;
+MSG_BOARDS_TITLE
+Karty
+;
+MSG_PROJECT_MENU
+Projekt
+;
+MSG_ABOUT
+O programie...
+;
+MSG_ABOUT_MUI
+O MUI...
+;
+MSG_RUN_BENCHMARKS
+Uruchom testy
+;
+MSG_SAVE_REPORT
+Zapisz raport...
+;
+MSG_QUIT
+Zakoñcz
+;
+MSG_SETTINGS_MENU
+Ustawienia
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Zmierz szybko¶æ
+;
+MSG_SCSI_DEVICES
+Urz±dzenia SCSI...
+;
+MSG_CLOSE
+Zamknij
+;
+MSG_RESULTS_TITLE
+Wyniki
+;
+MSG_NAME
+Nazwa
+;
+MSG_LOCATION
+Lokalizacja
+;
+MSG_ADDRESS
+Adres
+;
+MSG_VERSION
+Wersja
+;
+MSG_SIZE
+Rozmiar
+;
+MSG_DRIVE
+Napêd
+;
+MSG_VOLUME
+Wolumen
+;
+MSG_REPORT_SAVED
+Raport zapisano w %s
+;
+MSG_REPORT_SAVE_FAILED
+Nie mo¿na zapisaæ raportu
+;
+MSG_FONT_INVALID
+B³êdna opcja FONT. U¿yj FONT=nazwa.rozmiar.
+;
+MSG_FONT_UNAVAILABLE
+Nie mo¿na otworzyæ wybranej czcionki.
+;
+MSG_FONT_TOO_LARGE
+Czcionka przekracza limit 8 x 8 pikseli.
+;
+MSG_FONT_FALLBACK
+U¿yto topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Raport...
+;
+MSG_REPORT_TITLE
+Raport systemowy
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Krótki
+;
+MSG_REPORT_FULL
+Pe³ny
+;
+MSG_REPORT_SAVE_AS
+Zapisz jako...
+;
+MSG_REPORT_FAILED
+Nie mo¿na utworzyæ podgl±du raportu
+;
+MSG_BTN_REPORT
+RAPORT
+;
+MSG_NETWORK
+Sieæ
+;
+MSG_NOT_RUNNING
+nieaktywny
 ;

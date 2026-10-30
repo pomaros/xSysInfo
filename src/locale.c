@@ -87,37 +87,37 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_REF_YOU */                "You",
 
     /* Memory view labels */
-    /* MSG_START_ADDRESS */          "START ADDRESS",
-    /* MSG_END_ADDRESS */            "END ADDRESS",
-    /* MSG_TOTAL_SIZE */             "TOTAL SIZE",
-    /* MSG_MEMORY_TYPE */            "MEMORY TYPE",
-    /* MSG_PRIORITY */               "PRIORITY",
-    /* MSG_LOWER_BOUND */            "LOWER BOUND",
-    /* MSG_UPPER_BOUND */            "UPPER BOUND",
-    /* MSG_FIRST_ADDRESS */          "FIRST ADDRESS",
-    /* MSG_AMOUNT_FREE */            "AMOUNT FREE",
-    /* MSG_LARGEST_BLOCK */          "LARGEST BLOCK",
-    /* MSG_NUM_CHUNKS */             "NUMBER OF CHUNKS",
-    /* MSG_NODE_NAME */              "NODE NAME",
-    /* MSG_MEMORY_SPEED */           "MEMORY SPEED",
+    /* MSG_START_ADDRESS */          "Start address",
+    /* MSG_END_ADDRESS */            "End address",
+    /* MSG_TOTAL_SIZE */             "Total size",
+    /* MSG_MEMORY_TYPE */            "Memory type",
+    /* MSG_PRIORITY */               "Priority",
+    /* MSG_LOWER_BOUND */            "Lower bound",
+    /* MSG_UPPER_BOUND */            "Upper bound",
+    /* MSG_FIRST_ADDRESS */          "First address",
+    /* MSG_AMOUNT_FREE */            "Amount free",
+    /* MSG_LARGEST_BLOCK */          "Largest block",
+    /* MSG_NUM_CHUNKS */             "Number of chunks",
+    /* MSG_NODE_NAME */              "Node name",
+    /* MSG_MEMORY_SPEED */           "Memory speed",
 
     /* Drives view labels */
-    /* MSG_DISK_ERRORS */            "NUMBER OF DISK ERRORS",
-    /* MSG_UNIT_NUMBER */            "UNIT NUMBER",
-    /* MSG_DISK_STATE */             "DISK STATE",
-    /* MSG_TOTAL_BLOCKS */           "TOTAL NUMBER OF BLOCKS",
-    /* MSG_BLOCKS_USED */            "TOTAL BLOCKS USED",
-    /* MSG_BYTES_PER_BLOCK */        "BLOCK SIZE",
-    /* MSG_DISK_TYPE */              "DRIVE/DISK TYPE",
-    /* MSG_VOLUME_NAME */            "VOLUME NAME",
-    /* MSG_DEVICE_NAME */            "DEVICE NAME",
-    /* MSG_SURFACES */               "SURFACES",
-    /* MSG_SECTORS_PER_SIDE */       "SECTORS PER SIDE",
-    /* MSG_RESERVED_BLOCKS */        "RESERVED BLOCKS",
-    /* MSG_LOWEST_CYLINDER */        "LOWEST CYLINDER",
-    /* MSG_HIGHEST_CYLINDER */       "HIGHEST CYLINDER",
-    /* MSG_NUM_BUFFERS */            "NUMBER OF BUFFERS",
-    /* MSG_SPEED */                  "DRIVE SPEED",
+    /* MSG_DISK_ERRORS */            "Number of disk errors",
+    /* MSG_UNIT_NUMBER */            "Unit number",
+    /* MSG_DISK_STATE */             "Disk state",
+    /* MSG_TOTAL_BLOCKS */           "Total number of blocks",
+    /* MSG_BLOCKS_USED */            "Total blocks used",
+    /* MSG_BYTES_PER_BLOCK */        "Block size",
+    /* MSG_DISK_TYPE */              "Drive/disk type",
+    /* MSG_VOLUME_NAME */            "Volume name",
+    /* MSG_DEVICE_NAME */            "Device name",
+    /* MSG_SURFACES */               "Surfaces",
+    /* MSG_SECTORS_PER_SIDE */       "Sectors per side",
+    /* MSG_RESERVED_BLOCKS */        "Reserved blocks",
+    /* MSG_LOWEST_CYLINDER */        "Lowest cylinder",
+    /* MSG_HIGHEST_CYLINDER */       "Highest cylinder",
+    /* MSG_NUM_BUFFERS */            "Number of buffers",
+    /* MSG_SPEED */                  "Drive speed",
     /* MSG_DRIVES_NO_DRIVES_FOUND */ "No drives found.",
     /* MSG_DASH_PLACEHOLDER */       "---",
     /* MSG_DISK_NO_DISK_INSERTED */  "No Disk Inserted",
@@ -261,8 +261,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_GAYLE */                  "Gayle",
     /* MSG_FAT_GARY */               "Fat Gary",
     /* MSG_GARY_UNKNOWN */           "Unknown",
-    /* MSG_EXT_INFO */               "Extended info for A3000/4000",
-    /* MSG_NV_RAM */                 "NV-RAM (BattMem):",
+    [MSG_NV_RAM] =                   "NV-RAM (BattMem):",
     /* MSG_AMNESIA */                "Amnesia",
     /* MSG_SHARED_AMNESIA */         "Shared amn.",
     /* MSG_TIMEOUT */                "Timeout",
@@ -289,10 +288,10 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_DENISE_UNKNOWN */         "Unknown Denise",
     /* MSG_AGNUS_ALICE_PAL */        "Alice 8374",
     /* MSG_AGNUS_ALICE_NTSC */       "Alice 8374",
-    /* MSG_AGNUS_ECS_2MB_PAL */      "FatAgnus 8375/72B (ECS)",
-    /* MSG_AGNUS_ECS_2MB_NTSC */     "FatAgnus 8375/72B (ECS)",
-    /* MSG_AGNUS_ECS_B_PAL */        "FatAgnus 8372B/75 (ECS)",
-    /* MSG_AGNUS_ECS_B_NTSC */       "FatAgnus 8372B/75 (ECS)",
+    /* MSG_AGNUS_ECS_2MB_PAL */      "Agnus 8375/72B (ECS)",
+    /* MSG_AGNUS_ECS_2MB_NTSC */     "Agnus 8375/72B (ECS)",
+    /* MSG_AGNUS_ECS_B_PAL */        "Agnus 8372B/75 (ECS)",
+    /* MSG_AGNUS_ECS_B_NTSC */       "Agnus 8372B/75 (ECS)",
     /* MSG_AGNUS_ECS_PAL */          "FatAgnus 8372 (ECS)",
     /* MSG_AGNUS_ECS_NTSC */         "FatAgnus 8372 (ECS)",
     /* MSG_AGNUS_OCS_FAT_PAL */      "FatAgnus 8371 (OCS)",
@@ -360,13 +359,120 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_NCR_WIDTH */             "Data width",
     /* MSG_NCR_PARITY */            "Parity check",
     /* MSG_NCR_DOUBLER */           "Clock doubler",
+    /* MSG_CHIP_ID */ "Chip ID",
+    /* MSG_PCMCIA_CARD */ "PCMCIA card",
+    /* MSG_PCMCIA_SLOT */ "PCMCIA slot",
+    /* MSG_PCMCIA_ACCESS */ "Access time",
+    /* MSG_AKIKO_C2P */ "C2P (OS)",
+    /* MSG_PPC_REVISION */ "PPC revision",
+    /* MSG_PPC_BUS */ "PPC bus MHz",
+    /* MSG_PPC_RUNTIME */ "PPC runtime",
+    /* MSG_HARDWARE_SCSI */ "SCSI",
+    /* General titles, actions and list headings */
+    /* MSG_SOFTWARE_TITLE */ "Software",
+    /* MSG_HARDWARE_TITLE */ "Hardware",
+    /* MSG_CHIPSET_TITLE */ "Chipset",
+    /* MSG_SPEED_TITLE */ "Speed",
+    /* MSG_MEMORY_TITLE */ "Memory",
+    /* MSG_DRIVES_TITLE */ "Drives",
+    /* MSG_BOARDS_TITLE */ "Boards",
+    /* MSG_PROJECT_MENU */ "Project",
+    /* MSG_ABOUT */ "About...",
+    /* MSG_ABOUT_MUI */ "About MUI...",
+    /* MSG_RUN_BENCHMARKS */ "Run benchmarks",
+    /* MSG_SAVE_REPORT */ "Save report...",
+    /* MSG_QUIT */ "Quit",
+    /* MSG_SETTINGS_MENU */ "Settings",
+    /* MSG_MUI_SETTINGS */ "MUI...",
+    /* MSG_MEASURE_SPEED */ "Measure speed",
+    /* MSG_SCSI_DEVICES */ "SCSI devices...",
+    /* MSG_CLOSE */ "Close",
+    /* MSG_RESULTS_TITLE */ "Results",
+    /* MSG_NAME */ "Name",
+    /* MSG_LOCATION */ "Location",
+    /* MSG_ADDRESS */ "Address",
+    /* MSG_VERSION */ "Version",
+    /* MSG_SIZE */ "Size",
+    /* MSG_DRIVE */ "Drive",
+    /* MSG_VOLUME */ "Volume",
+    /* MSG_REPORT_SAVED */ "Report saved to %s",
+    /* MSG_REPORT_SAVE_FAILED */ "Could not save report",
+    /* MSG_FONT_INVALID */ "Invalid FONT setting. Use FONT=name.size.",
+    /* MSG_FONT_UNAVAILABLE */ "Could not open the requested font.",
+    /* MSG_FONT_TOO_LARGE */ "Font exceeds the 8 x 8 pixel limit.",
+    /* MSG_FONT_FALLBACK */ "Using topaz.8.",
+    /* MSG_BOARD_DETAILS */ "Details",
+    /* MSG_BOARD_DETAILS_TITLE */ "Expansion board details",
+    /* MSG_BOARD_BACK */ "Back",
+    /* MSG_BOARD_PCI_CLASS */ "PCI class",
+    /* MSG_BOARD_SYSTEM_MEMORY */ "System memory",
+    /* MSG_BOARD_MEMORY_SPACE */ "Memory / I/O space",
+    /* MSG_BOARD_ROM_VALID */ "ROM vector valid",
+    /* MSG_BOARD_ROM_VECTOR */ "ROM vector offset",
+    /* MSG_BOARD_CHAINED */ "Next board related",
+    /* MSG_BOARD_SHUTUP */ "Can shut up",
+    /* MSG_BOARD_ZORRO_III */ "Zorro III flag",
+    /* MSG_BOARD_EXTENDED */ "Extended size (Z3)",
+    /* MSG_BOARD_SUBSIZE */ "Logical size (Z3)",
+    /* MSG_BOARD_SIZE_MATCHES */ "Matches physical size",
+    /* MSG_BOARD_AUTO_SIZE */ "Automatic size",
+    /* MSG_BOARD_RESERVED */ "Reserved",
+    /* MSG_BOARD_MEMORY_DEVICE */ "Memory device",
+    /* MSG_BOARD_IO_DEVICE */ "I/O device",
+    /* MSG_BOARD_8MB_SPACE */ "8 MB expansion space",
+    /* MSG_BOARD_ANY_SPACE */ "Any address space",
+    /* MSG_ECLOCK */          "EClock",
+    /* MSG_REPORT_OPEN */ "Report...",
+    /* MSG_REPORT_TITLE */ "System report",
+    /* MSG_REPORT_WHICH */ "WhichAmiga",
+    /* MSG_REPORT_BRIEF */ "Brief",
+    /* MSG_REPORT_FULL */ "Full",
+    /* MSG_REPORT_SAVE_AS */ "Save as...",
+    /* MSG_REPORT_FAILED */ "Could not create report preview",
+    /* MSG_BTN_REPORT */ "REPORT",
+    /* MSG_NETWORK */ "Network",
+    /* MSG_NOT_RUNNING */ "not running"
 };
 
 /* Get string by ID - uses catalog if available, falls back to English */
+static BOOL builtin_only;
+
+void locale_set_builtin_only(BOOL on)
+{
+    builtin_only = on;
+}
+
+const char *get_builtin_string(LocaleStringID id)
+{
+    if (id >= 0 && id < MSG_COUNT)
+        return default_strings[id];
+    return "???";
+}
+
+const char *localize_builtin(const char *text)
+{
+    static const LocaleStringID stored[] = {
+        MSG_NA, MSG_NONE, MSG_UNKNOWN,
+        MSG_MSM6242B, MSG_RP5C01A, MSG_MK48T02, MSG_CLOCK_NOT_FOUND,
+        MSG_SLOT_PCMCIA, MSG_SLOT_ZORRO, MSG_ZORRO_II, MSG_ZORRO_III,
+        MSG_MODE_PAL, MSG_MODE_NTSC, MSG_NATIVE_GRAPHICS,
+        MSG_COMMENT_DEFAULT, MSG_COMMENT_CLASSIC, MSG_COMMENT_GOOD,
+        MSG_COMMENT_FAST, MSG_COMMENT_VERY_FAST, MSG_COMMENT_BLAZING,
+        MSG_COMMENT_RIDICULOUS, MSG_COMMENT_LUDICROUS, MSG_COMMENT_WARP11
+    };
+    ULONG i;
+
+    for (i = 0; i < sizeof(stored) / sizeof(stored[0]); i++) {
+        if (strcmp(text, default_strings[stored[i]]) == 0)
+            return get_string(stored[i]);
+    }
+    return text;
+}
+
 const char *get_string(LocaleStringID id)
 {
     if (id >= 0 && id < MSG_COUNT) {
-        if (catalog) {
+        if (catalog && !builtin_only) {
             return (const char *)GetCatalogStr(catalog, id,
                        (CONST_STRPTR)default_strings[id]);
         }

@@ -9,6 +9,7 @@ xsysinfo-*.adf
 xsysinfo-*.lha
 /TinySetPatch
 /Stack
+/xSysInfoLoader
 
 /src/*.hunk
 /extern/

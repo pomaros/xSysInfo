@@ -16,7 +16,9 @@
 #include <proto/graphics.h>
 
 #include "xsysinfo.h"
+#include "format.h"
 #include "memory.h"
+#include "growlist.h"
 #include "gui.h"
 #include "locale_str.h"
 #include "benchmark.h"
@@ -158,14 +160,37 @@ static APTR find_largest_free_chunk(struct MemHeader *mh, ULONG *size)
     return chunk;
 }
 
+void free_memory_regions(void)
+{
+    free_list((APTR *)&memory_regions.regions, &memory_regions.capacity,
+              sizeof(MemoryRegion));
+    memory_regions.count = 0;
+}
+
 /*
  * Enumerate all memory regions
  */
 void enumerate_memory_regions(void)
 {
     struct MemHeader *mh;
+    ULONG headers = 0;
 
-    memset(&memory_regions, 0, sizeof(memory_regions));
+    free_memory_regions();
+    memory_regions.total_chip_size = 0;
+    memory_regions.total_fast_size = 0;
+
+    /* Allocate before the scan, so it reads free counts that already
+     * include this list. */
+    Forbid();
+    for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
+         (struct Node *)mh != (struct Node *)&SysBase->MemList.lh_Tail;
+         mh = (struct MemHeader *)mh->mh_Node.ln_Succ)
+        headers++;
+    Permit();
+    if (headers > MAX_MEMORY_REGIONS)
+        headers = MAX_MEMORY_REGIONS;
+    grow_list((APTR *)&memory_regions.regions, &memory_regions.capacity,
+              0, headers, sizeof(MemoryRegion), MAX_MEMORY_REGIONS);
 
     Forbid();
 
@@ -175,15 +200,19 @@ void enumerate_memory_regions(void)
 
         ULONG start = (ULONG)mh->mh_Lower & 0xffff8000;
         ULONG size = (ULONG)mh->mh_Upper - start;
+        ULONG end = ((ULONG)mh->mh_Upper + 0x7fff) & 0xffff8000;
 
-        /* Use the same region capacities as the memory view. Exec's
-         * MEMF_TOTAL excludes reserved bytes at the start of each region. */
+        /* The totals report installed memory, unlike the memory view.
+         * Exec's region excludes reserved bytes at its start, and
+         * Kickstart 1.x takes its 6 KB supervisor stack from the top. */
+        if (end < (ULONG)mh->mh_Upper)
+            end = (ULONG)mh->mh_Upper;
         if (mh->mh_Attributes & MEMF_CHIP)
-            memory_regions.total_chip_size += size;
+            memory_regions.total_chip_size += end - start;
         else if (mh->mh_Attributes & MEMF_FAST)
-            memory_regions.total_fast_size += size;
+            memory_regions.total_fast_size += end - start;
 
-        if (memory_regions.count >= MAX_MEMORY_REGIONS) continue;
+        if (memory_regions.count >= memory_regions.capacity) continue;
 
         MemoryRegion *region = &memory_regions.regions[memory_regions.count];
 
@@ -313,32 +342,49 @@ ULONG measure_memory_speed(ULONG index)
 }
 
 /*
+ * Show a region's measured speed on the main screen, which otherwise
+ * waits for the SPEED test. The last measured region of each kind wins.
+ */
+void publish_memory_speed(ULONG index)
+{
+    const MemoryRegion *region;
+
+    if (index >= memory_regions.count) return;
+    region = &memory_regions.regions[index];
+    if (!region->speed_bytes_sec) return;
+
+    if (region->mem_type & MEMF_CHIP)
+        bench_results.chip_speed = region->speed_bytes_sec;
+    else if (region->mem_type & MEMF_FAST)
+        bench_results.fast_speed = region->speed_bytes_sec;
+}
+
+/*
  * Draw memory view
  */
-static void format_memory_speed(const MemoryRegion *region, char *buffer,
+void format_memory_speed(const MemoryRegion *region, char *buffer,
                                 size_t size)
 {
-    if (region->speed_measured) {
-        ULONG speed = region->speed_bytes_sec;
-        if (speed >= 1000000) {
-            snprintf(buffer, size, "%lu.%lu MB/s",
-                     (unsigned long)(speed / 1000000),
-                     (unsigned long)((speed % 1000000) / 100000));
-        } else if (speed >= 10000) {
-            snprintf(buffer, size, "%lu.%lu KB/s",
-                     (unsigned long)(speed / 1000),
-                     (unsigned long)((speed % 1000) / 100));
-        } else if (speed > 0) {
-            snprintf(buffer, size, "%lu B/s", (unsigned long)speed);
-        } else {
-            snprintf(buffer, size, "---");
-        }
+    if (region->speed_measured && region->speed_bytes_sec > 0) {
+        char scaled[16];
+
+        /* Same digits as the main screen for the same measurement. */
+        format_scaled(scaled, sizeof(scaled), region->speed_bytes_sec / 10000,
+                      TRUE);
+        snprintf(buffer, size, "%s %s", scaled, get_string(MSG_MEM_SPEED_UNIT));
     } else {
         snprintf(buffer, size, "---");
     }
 }
 
 static void draw_memory_value(WORD y, const char *value);
+
+static void clear_memory_values(WORD first, WORD last)
+{
+    SetAPen(app->rp, COLOR_PANEL_BG);
+    RectFill(app->rp, MEMORY_VALUE_X, first - 8, MEMORY_VALUE_MAX_X, last + 2);
+}
+
 
 static void draw_memory_speed_row(void)
 {
@@ -353,6 +399,7 @@ static void draw_memory_speed_row(void)
     region = &memory_regions.regions[app->memory_region_index];
     format_memory_speed(region, buffer, sizeof(buffer));
 
+    clear_memory_values(164, 164);
     draw_memory_value(164, buffer);
 }
 
@@ -360,8 +407,6 @@ static void draw_memory_value(WORD y, const char *value)
 {
     struct RastPort *rp = app->rp;
 
-    SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, MEMORY_VALUE_X, y - 8, MEMORY_VALUE_MAX_X, y + 2);
     SetAPen(rp, COLOR_HIGHLIGHT);
     SetBPen(rp, COLOR_PANEL_BG);
     draw_text_clipped(MEMORY_VALUE_X, y, value,
@@ -456,99 +501,38 @@ static void draw_memory_buttons(void)
  */
 static void draw_memory_data(BOOL full_redraw)
 {
-    struct RastPort *rp = app->rp;
-    char buffer[64];
-    WORD y;
-    MemoryRegion *region;
+    static const LocaleStringID labels[] = {
+        MSG_START_ADDRESS,
+        MSG_END_ADDRESS,
+        MSG_TOTAL_SIZE,
+        MSG_MEMORY_TYPE,
+        MSG_PRIORITY,
+        MSG_LOWER_BOUND,
+        MSG_UPPER_BOUND,
+        MSG_FIRST_ADDRESS,
+        MSG_AMOUNT_FREE,
+        MSG_LARGEST_BLOCK,
+        MSG_NUM_CHUNKS,
+        MSG_NODE_NAME,
+        MSG_MEMORY_SPEED
+    };
+    ULONG row;
 
     if (memory_regions.count == 0) {
-        SetAPen(rp, COLOR_TEXT);
-        SetBPen(rp, COLOR_PANEL_BG);
-        Move(rp, 200, 120);
-        Text(rp, (CONST_STRPTR)"No memory regions found", 23);
+        draw_text(200, 120, "No memory regions found", COLOR_TEXT);
         return;
     }
 
     if (full_redraw) {
-        /* Draw memory info panel with 3D border */
         draw_panel(100, 28, 520, 150, NULL);
+        for (row = 0; row < sizeof(labels) / sizeof(labels[0]); row++) {
+            draw_label_value(128, 44 + row * 10, get_string(labels[row]),
+                             NULL, 168);
+        }
     } else {
-        draw_memory_values();
-        draw_memory_buttons();
-        return;
+        clear_memory_values(44, 164);
     }
-
-    /* Refresh current region data */
-    refresh_memory_region(app->memory_region_index);
-    region = &memory_regions.regions[app->memory_region_index];
-
-    /* Draw memory info */
-    y = 44;
-
-    /* Start address */
-    snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)region->start_address);
-    draw_label_value(128, y, get_string(MSG_START_ADDRESS), buffer, 168);
-    y += 10;
-
-    /* End address */
-    snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)region->end_address);
-    draw_label_value(128, y, get_string(MSG_END_ADDRESS), buffer, 168);
-    y += 10;
-
-    /* Total size */
-    format_size(region->total_size, buffer, sizeof(buffer));
-    draw_label_value(128, y, get_string(MSG_TOTAL_SIZE), buffer, 168);
-    y += 10;
-
-    /* Memory type */
-    draw_label_value_max(128, y, get_string(MSG_MEMORY_TYPE),
-                         region->type_string, 168, 618);
-    y += 10;
-
-    /* Priority */
-    snprintf(buffer, sizeof(buffer), "%d", region->priority);
-    draw_label_value(128, y, get_string(MSG_PRIORITY), buffer, 168);
-    y += 10;
-
-    /* Lower bound */
-    snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)region->lower_bound);
-    draw_label_value(128, y, get_string(MSG_LOWER_BOUND), buffer, 168);
-    y += 10;
-
-    /* Upper bound */
-    snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)region->upper_bound);
-    draw_label_value(128, y, get_string(MSG_UPPER_BOUND), buffer, 168);
-    y += 10;
-
-    /* First free address */
-    snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)region->first_free);
-    draw_label_value(128, y, get_string(MSG_FIRST_ADDRESS), buffer, 168);
-    y += 10;
-
-    /* Amount free */
-    snprintf(buffer, sizeof(buffer), "%lu Bytes", (unsigned long)region->amount_free);
-    draw_label_value(128, y, get_string(MSG_AMOUNT_FREE), buffer, 168);
-    y += 10;
-
-    /* Largest block */
-    snprintf(buffer, sizeof(buffer), "%lu Bytes", (unsigned long)region->largest_block);
-    draw_label_value(128, y, get_string(MSG_LARGEST_BLOCK), buffer, 168);
-    y += 10;
-
-    /* Number of chunks */
-    snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)region->num_chunks);
-    draw_label_value(128, y, get_string(MSG_NUM_CHUNKS), buffer, 168);
-    y += 10;
-
-    /* Node name */
-    draw_label_value_max(128, y, get_string(MSG_NODE_NAME),
-                         region->node_name, 168, 618);
-    y += 10;
-
-    format_memory_speed(region, buffer, sizeof(buffer));
-    draw_label_value(128, y, get_string(MSG_MEMORY_SPEED), buffer, 168);
-
-    /* Draw navigation buttons */
+    draw_memory_values();
     draw_memory_buttons();
 }
 
@@ -616,6 +600,7 @@ void memory_view_handle_button(ButtonID id)
                 Forbid();
                 measure_memory_speed(app->memory_region_index);
                 Permit();
+                publish_memory_speed(app->memory_region_index);
                 hide_status_overlay();
                 draw_memory_speed_row();
             }

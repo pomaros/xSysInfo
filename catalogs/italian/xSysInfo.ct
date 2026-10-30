@@ -70,7 +70,7 @@ MSG_MODE
 Modalità
 ;
 MSG_DISPLAY
-Visualizzazione
+Video
 ;
 MSG_CPU_MHZ
 CPU/MHz
@@ -171,93 +171,93 @@ Tuo
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-INDIRIZZO INIZIALE
+Indirizzo iniziale
 ;
 MSG_END_ADDRESS
-INDIRIZZO FINALE
+Indirizzo finale
 ;
 MSG_TOTAL_SIZE
-DIMENSIONE TOTALE
+Dimensione totale
 ;
 MSG_MEMORY_TYPE
-TIPO DI MEMORIA
+Tipo di memoria
 ;
 MSG_PRIORITY
-PRIORITA'
+Priorita'
 ;
 MSG_LOWER_BOUND
-LIMITE INFERIORE
+Limite inferiore
 ;
 MSG_UPPER_BOUND
-LIMITE SUPERIORE
+Limite superiore
 ;
 MSG_FIRST_ADDRESS
-PRIMO INDIRIZZO
+Primo indirizzo
 ;
 MSG_AMOUNT_FREE
-SPAZIO LIBERO
+Spazio libero
 ;
 MSG_LARGEST_BLOCK
-BLOCCO PIU' GRANDE
+Blocco piu' grande
 ;
 MSG_NUM_CHUNKS
-NUMERO DI BLOCCHI
+Numero di blocchi
 ;
 MSG_NODE_NAME
-NOME DEL NODO
+Nome del nodo
 ;
 MSG_MEMORY_SPEED
-VELOCITA' MEMORIA
+Velocita' memoria
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-NUMERO DI ERRORI DISCO
+Numero di errori disco
 ;
 MSG_UNIT_NUMBER
-NUMERO UNITA'
+Numero unita'
 ;
 MSG_DISK_STATE
-STATO DEL DISCO
+Stato del disco
 ;
 MSG_TOTAL_BLOCKS
-NUMERO TOTALE DI BLOCCHI
+Numero totale di blocchi
 ;
 MSG_BLOCKS_USED
-BLOCCHI UTILIZZATI
+Blocchi utilizzati
 ;
 MSG_BYTES_PER_BLOCK
-BYTE PER BLOCCO
+Byte per blocco
 ;
 MSG_DISK_TYPE
-TIPO DI DISCO/UNITA'
+Tipo di disco/unita'
 ;
 MSG_VOLUME_NAME
-NOME DEL VOLUME
+Nome del volume
 ;
 MSG_DEVICE_NAME
-NOME DEL DISPOSITIVO
+Nome del dispositivo
 ;
 MSG_SURFACES
-SUPERFICI
+Superfici
 ;
 MSG_SECTORS_PER_SIDE
-SETTORI PER LATO
+Settori per lato
 ;
 MSG_RESERVED_BLOCKS
-BLOCCHI RISERVATI
+Blocchi riservati
 ;
 MSG_LOWEST_CYLINDER
-CILINDRO INIZIALE
+Cilindro iniziale
 ;
 MSG_HIGHEST_CYLINDER
-CILINDRO FINALE
+Cilindro finale
 ;
 MSG_NUM_BUFFERS
-NUMERO DI BUFFER
+Numero di buffer
 ;
 MSG_SPEED
-VELOCITA' UNITA'
+Velocita' unita'
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nessuna unità trovata.
@@ -559,7 +559,7 @@ MSG_COMMENT_RIDICULOUS
 Velocità ridicola!
 ;
 MSG_COMMENT_BLAZING
-Incredibilmente veloce!
+Velocissimo!
 ;
 MSG_COMMENT_VERY_FAST
 Molto veloce!
@@ -631,9 +631,6 @@ Fat Gary
 ;
 MSG_GARY_UNKNOWN
 Sconosciuto
-;
-MSG_EXT_INFO
-Informazioni estese A3000/4000
 ;
 MSG_NV_RAM
 NV-RAM (BattMem):
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,163 @@ Ctrl. parità
 ;
 MSG_NCR_DOUBLER
 Raddoppio clk
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID chip
+;
+MSG_PCMCIA_CARD
+Scheda PCMCIA
+;
+MSG_PCMCIA_SLOT
+Slot PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Tempo accesso
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+Revisione PPC
+;
+MSG_PPC_BUS
+Bus PPC MHz
+;
+MSG_PPC_RUNTIME
+Sistema PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Software
+;
+MSG_HARDWARE_TITLE
+Hardware
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Velocità
+;
+MSG_MEMORY_TITLE
+Memoria
+;
+MSG_DRIVES_TITLE
+Unità
+;
+MSG_BOARDS_TITLE
+Schede
+;
+MSG_PROJECT_MENU
+Progetto
+;
+MSG_ABOUT
+Informazioni...
+;
+MSG_ABOUT_MUI
+Informazioni su MUI...
+;
+MSG_RUN_BENCHMARKS
+Avvia benchmark
+;
+MSG_SAVE_REPORT
+Salva rapporto...
+;
+MSG_QUIT
+Esci
+;
+MSG_SETTINGS_MENU
+Impostazioni
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Misura velocità
+;
+MSG_SCSI_DEVICES
+Dispositivi SCSI...
+;
+MSG_CLOSE
+Chiudi
+;
+MSG_RESULTS_TITLE
+Risultati
+;
+MSG_NAME
+Nome
+;
+MSG_LOCATION
+Posizione
+;
+MSG_ADDRESS
+Indirizzo
+;
+MSG_VERSION
+Versione
+;
+MSG_SIZE
+Dimensione
+;
+MSG_DRIVE
+Unità
+;
+MSG_VOLUME
+Volume
+;
+MSG_REPORT_SAVED
+Rapporto salvato in %s
+;
+MSG_REPORT_SAVE_FAILED
+Impossibile salvare il rapporto
+;
+MSG_FONT_INVALID
+Valore FONT non valido. Usare FONT=nome.dimensione.
+;
+MSG_FONT_UNAVAILABLE
+Impossibile aprire il carattere richiesto.
+;
+MSG_FONT_TOO_LARGE
+Il carattere supera il limite di 8 x 8 pixel.
+;
+MSG_FONT_FALLBACK
+Viene usato topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Rapporto...
+;
+MSG_REPORT_TITLE
+Rapporto di sistema
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Breve
+;
+MSG_REPORT_FULL
+Completo
+;
+MSG_REPORT_SAVE_AS
+Salva come...
+;
+MSG_REPORT_FAILED
+Impossibile creare l'anteprima del rapporto
+;
+MSG_BTN_REPORT
+REPORT
+;
+MSG_NETWORK
+Rete
+;
+MSG_NOT_RUNNING
+non attivo
 ;

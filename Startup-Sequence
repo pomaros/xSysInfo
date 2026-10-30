@@ -1,3 +1,5 @@
 stack 32768
 TinySetPatch QUIET
+xSysInfoLoader START
 xSysInfo SCSI
+xSysInfoLoader STOP

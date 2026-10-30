@@ -16,15 +16,13 @@
 #include <string.h>
 #include <devices/timer.h>
 #include <proto/exec.h>
-#include <proto/timer.h>
 
 #include "hardware.h"
+#include "berr_trap.h"
 #include "wdprobe.h"
+#include "probeclock.h"
 #include "locale_str.h"
 #include "debug.h"
-
-extern struct Device *TimerBase;
-extern struct ExecBase *SysBase;
 
 #define WD_INDEX ((volatile UBYTE *)0xdd0049)
 #define WD_DATA  ((volatile UBYTE *)0xdd0043)
@@ -67,14 +65,14 @@ static void wd_write(UBYTE reg, UBYTE value)
     *WD_DATA = value;
 }
 
-/* ReadEClock is interrupt-safe on V36+. With a working timer, all masked
+/* The shared probe clock works with interrupts disabled. All masked
  * work including recovery finishes within 80 ms (one CIA rollover).
  * A poll limit bounds recovery even with a broken/frozen timer. No DOS
  * calls here. The first 60 ms are for probing, the final 20 for recovery. */
 static ULONG elapsed(void)
 {
     struct EClockVal now;
-    if (ReadEClock(&now) != clock_rate)
+    if (read_probe_clock(&now) != clock_rate)
         clock_failed = TRUE;
     return now.ev_lo - clock_start;
 }
@@ -124,7 +122,7 @@ static BOOL selection_ticks(UBYTE timeout, ULONG deadline, ULONG *ticks)
 
 WDProbeStatus probe_wd_controller(void)
 {
-    UBYTE saved[WD_SOURCE + 1], queue_tag = 0, status, old_timeout;
+    UBYTE saved[WD_SOURCE + 1], queue_tag = 0, status, asr, istr;
     ULONG short_ticks, long_ticks, rates[2] = {0, 0}, deadline;
     struct EClockVal now;
     WDProbeInfo result;
@@ -137,26 +135,29 @@ WDProbeStatus probe_wd_controller(void)
     if (!hw_info.sdmac_present || hw_info.gary_type != FAT_GARY ||
         hw_info.ncr_type != NCR_NONE)
         return WD_PROBE_NOT_APPLICABLE;
-    if (!TimerBase || SysBase->LibNode.lib_Version < 36 ||
-        TimerBase->dd_Library.lib_Version < 36)
+    /* An absent register can take a full bus timeout. Probe before the
+     * timed section, which must fit within the probe clock's range. */
+    if (berr_probe_byte((ULONG)SDMAC_WD_ASR, &asr) ||
+        berr_probe_byte((ULONG)SDMAC_ISTR, &istr))
         return WD_PROBE_UNAVAILABLE;
-    clock_rate = ReadEClock(&now);
-    if (clock_rate < 700000 || clock_rate > 720000)
+    if (asr != 0 || istr != SDMAC_ISTR_FIFOE)
+        return WD_PROBE_BUSY;
+    if (!acquire_probe_clock())
         return WD_PROBE_UNAVAILABLE;
     memset(&result, 0, sizeof(result));
     clock_failed = FALSE;
 
     Forbid();
     Disable();
-    if (ReadEClock(&now) != clock_rate) {
+    clock_rate = start_probe_clock(&now);
+    if (clock_rate < 700000 || clock_rate > 720000) {
         Enable();
         Permit();
+        release_probe_clock();
         return WD_PROBE_UNAVAILABLE;
     }
     clock_start = now.ev_lo;
     deadline = clock_rate * 60 / 1000;
-    old_timeout = *(volatile UBYTE *)FAT_GARY_TIME_OUT_REG;
-    *(volatile UBYTE *)FAT_GARY_TIME_OUT_REG = FAT_GARY_TIME_OUT_DSACK;
 
     /* Refuse busy, pending-interrupt, parity-error and open-bus states
      * before touching the WD selector or acknowledging any interrupt. */
@@ -267,9 +268,9 @@ recover:
         memset(&result, 0, sizeof(result));
     }
 done:
-    *(volatile UBYTE *)FAT_GARY_TIME_OUT_REG = old_timeout;
     Enable();
     Permit();
+    release_probe_clock();
     if (changed)
         wd_info = result;
     /* A redirected debug stream could itself access the failed disk. */

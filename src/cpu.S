@@ -52,12 +52,51 @@ RAMSEY_CTRL EQU $DE0003
 	XDEF	_GetVBR
 	XDEF	_GetSSP
 	XDEF	_GetMMU
+	XDEF	_GetMMUTranslation
 	XDEF	_GetCacheBits
 	XDEF	_SetCacheBits
 	XDEF	_GetRamseyRev
 	XDEF	_GetRamseyCtrl
 	XDEF	_RunRamseyProbe
+	XDEF	_ProbeClockInterrupt
 	XREF	_sample_ramsey_refreshes
+
+; CIA timer interrupts are masked while the probe clock is owned.
+; AddICRVector still requires a valid interrupt server.
+_ProbeClockInterrupt:
+	moveq	#0,d0
+	rts
+
+; Keep the operands finite so every pass measures ordinary arithmetic:
+; x -> ((((x + 3) * 4 - 3) / 4) * 3 + 4 - 3) / 4 converges to 7.75.
+; The mix of two adds, two subtracts, three multiplies and one divide
+; is unchanged. FPCR and FPSR are cleared for the loop and restored, so
+; exception bits left by an earlier run cannot change its speed.
+FLOPS_LOOP	MACRO
+	fmove.l	fpcr,-(sp)
+	fmove.l	fpsr,-(sp)
+	fmovem.x fp2-fp3,-(sp)
+	fmove.l	#0,fpcr
+	fmove.l	#0,fpsr
+	fmove.l	#2,fp0		; x = 2
+	fmove.l	#3,fp1
+	fmove.l	#4,fp2
+	fmove.s	#$3e800000,fp3	; 0.25
+.loop\@:
+	fadd.x	fp1,fp0		; x + 3
+	fmul.x	fp2,fp0		; * 4
+	fsub.x	fp1,fp0		; - 3
+	fdiv.x	fp2,fp0		; / 4
+	fmul.x	fp1,fp0		; * 3
+	fadd.x	fp2,fp0		; + 4
+	fsub.x	fp1,fp0		; - 3
+	fmul.x	fp3,fp0		; * 0.25
+	subq.l	#1,d0
+	bne.s	.loop\@
+	fmovem.x (sp)+,fp2-fp3
+	fmove.l	(sp)+,fpsr
+	fmove.l	(sp)+,fpcr
+	ENDM
 
 _DoFlops:
 	tst.l	d0
@@ -76,54 +115,15 @@ _DoFlops:
 	bra 	end_fpu
 m68881_fpu:
 	MACHINE 68881
-	fmove.x  #2,fp0 	; fb = 2
-	fmove.x  #3,fp1 	; fc = 3
-	fmove.x  #4,fp2		; fd = 4
-m68881_fpu_loop:
-	fadd.x   fp1,fp0 	; fa = fb + fc
-	fmul.x   fp2,fp0	; fb = fa * fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fdiv.x   fp2,fp0	; fd = fc / fb
-	fmul.x   fp1,fp0	; fa = fb * fc
-	fadd.x   fp2,fp0	; fb = fa + fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fmul.x   fp2,fp0	; fd = fc * fa
-	subq.l	#1,d0
-	bne		m68881_fpu_loop
+	FLOPS_LOOP
 	bra 	end_fpu
 m68040_fpu:
 	MACHINE 68040
-	fmove.x  #2,fp0 ; fb = 2
-	fmove.x  #3,fp1 ; fc = 3
-	fmove.x  #4,fp2	; fd = 4
-m68040_fpu_loop:
-	fadd.x   fp1,fp0 	; fa = fb + fc
-	fmul.x   fp2,fp0	; fb = fa * fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fdiv.x   fp2,fp0	; fd = fc / fb
-	fmul.x   fp1,fp0	; fa = fb * fc
-	fadd.x   fp2,fp0	; fb = fa + fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fmul.x   fp2,fp0	; fd = fc * fa
-	subq.l	#1,d0
-	bne		m68040_fpu_loop
+	FLOPS_LOOP
 	bra 	 end_fpu
 m68060_fpu:
 	MACHINE 68060
-	fmove.x  #2,fp0 ; fb = 2
-	fmove.x  #3,fp1 ; fc = 3
-	fmove.x  #4,fp2	; fd = 4
-m68060_fpu_loop:
-	fadd.x   fp1,fp0 	; fa = fb + fc
-	fmul.x   fp2,fp0	; fb = fa * fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fdiv.x   fp2,fp0	; fd = fc / fb
-	fmul.x   fp1,fp0	; fa = fb * fc
-	fadd.x   fp2,fp0	; fb = fa + fd
-	fsub.x   fp1,fp0	; fc = fb - fa
-	fmul.x   fp2,fp0	; fd = fc * fa
-	subq.l	#1,d0
-	bne		m68060_fpu_loop
+	FLOPS_LOOP
 end_fpu:
 	MACHINE 68060
 	rts
@@ -315,6 +315,81 @@ _writeCacheBits:
 	nop
 	rte
 
+; Read paged-translation status without writing any MMU/cache register.
+; d0: ASM_CPU_68020 (68851), 68030, 68040 or 68060; other values unknown.
+; Returns -1 on an unsupported instruction, 0 disabled, 1 enabled.
+_GetMMUTranslation:
+        cmp.l   #ASM_CPU_68020,d0
+        beq.s   .supported
+        cmp.l   #ASM_CPU_68030,d0
+        beq.s   .supported
+        cmp.l   #ASM_CPU_68040,d0
+        beq.s   .supported
+        cmp.l   #ASM_CPU_68060,d0
+        beq.s   .supported
+        moveq   #-1,d0
+        rts
+.supported:
+        movem.l d2/a3/a5-a6,-(sp)
+        move.l  d0,d2
+        lea     mmu_translation_super(pc),a5
+        move.l  $4.w,a6
+        jsr     _LVOSupervisor(a6)
+        movem.l (sp)+,d2/a3/a5-a6
+        rts
+
+mmu_translation_super:
+        MACHINE 68020
+        ori.w   #$0700,sr
+        ; Run on a copy of the first 64 vectors, as _testMMU does, so the
+        ; live table is never written: an active MMU may protect or remap
+        ; it. All other exceptions, including NMI, keep their handlers.
+        movec   vbr,a0           ; restored before returning
+        lea     -256(sp),sp
+        move.w  #252,d1
+mmu_translation_copy:
+        move.l  (a0,d1.w),(sp,d1.w)
+        subq.w  #4,d1
+        bpl.s   mmu_translation_copy
+        lea     mmu_translation_fault(pc),a1
+        move.l  a1,IllegalInstructionVector(sp)
+        move.l  a1,Line1111Vector(sp)
+        move.l  a1,$34(sp)        ; coprocessor protocol violation (68851)
+        move.l  sp,a1
+        subq.l  #4,sp            ; PMOVE destination, on the mapped stack
+        move.l  sp,a3            ; checkpoint above any exception frame
+        movec   a1,vbr
+        cmp.l   #ASM_CPU_68030,d2
+        bhi.s   mmu_translation_040
+
+        MACHINE 68020
+        MACHINE 68851
+mmu_translation_030:
+        pmove.l tc,(sp)
+        move.l  (sp),d1
+        moveq   #0,d0
+        tst.l   d1               ; 68851/030 TC.E is bit 31
+        bpl.s   mmu_translation_done
+        moveq   #1,d0
+        bra.s   mmu_translation_done
+
+        MACHINE 68040
+mmu_translation_040:
+        movec   tc,d1
+        moveq   #0,d0
+        btst    #15,d1           ; 040/060 TC.E is bit 15
+        beq.s   mmu_translation_done
+        moveq   #1,d0
+        bra.s   mmu_translation_done
+
+mmu_translation_fault:
+        move.l  a3,sp            ; discard CPU-specific exception frame
+        moveq   #-1,d0
+mmu_translation_done:
+        movec   a0,vbr
+        lea     4+256(sp),sp
+        rte                      ; original Supervisor frame restores SR
+
 _GetMMU:	;d0 holds the cpu type: either ASM_CPU_68020, ASM_CPU_68030 or ASM_CPU_68040
 	movem.l	a5/a6,-(sp)
 	lea.l	_testMMU,a5
@@ -392,8 +467,12 @@ m68020_mmu:
         clr.l $104(a7)               	;dummy for read
 
 
-        pflusha
         pmove.l tc,$f8(a7)            	;try to read translation control
+        ; An active MMU already proves its presence. Keep mappings used
+        ; by SuperKickstart, relocated code and stacks intact.
+        tst.l $f8(a7)
+        bmi .continue
+        pflusha
         movec.l d2,cacr                 ;flush the cache
         pmove.l $104(a7),tc         	;try to write it
         pflusha                         ;this might generate an exception for the EC30
@@ -469,8 +548,12 @@ m68030_mmu:
         lea .continue(pc),a1            ;jump address in case of fault
         clr.l $104(a7)               	;dummy for read
 
-        pflusha
         pmove.l tc,$f8(a7)            	;try to read translation control
+        ; Do not replace a live mapping just to distinguish an EC030.
+        ; A3000 SuperKickstart depends on the currently enabled MMU.
+        tst.l $f8(a7)
+        bmi .continue
+        pflusha
         movec.l d2,cacr                 ;flush the cache
         pmove.l $104(a7),tc         	;try to write it
         pflusha                         ;this might generate an exception for the EC30

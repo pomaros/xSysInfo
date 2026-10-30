@@ -171,93 +171,93 @@ Te
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-KEZDÖCÍM
+Kezdöcím
 ;
 MSG_END_ADDRESS
-VÉGCÍM
+Végcím
 ;
 MSG_TOTAL_SIZE
-TELJES MÉRET
+Teljes méret
 ;
 MSG_MEMORY_TYPE
-MEMÓRIATÍPUS
+Memóriatípus
 ;
 MSG_PRIORITY
-PRIORITÁS
+Prioritás
 ;
 MSG_LOWER_BOUND
-ALSÓ HATÁR
+Alsó határ
 ;
 MSG_UPPER_BOUND
-FELSÖ HATÁR
+Felsö határ
 ;
 MSG_FIRST_ADDRESS
-ELSÖ CIM
+Elsö cim
 ;
 MSG_AMOUNT_FREE
-SZABAD MEMÓRIA
+Szabad memória
 ;
 MSG_LARGEST_BLOCK
-LEGNAGYOBB BLOKK
+Legnagyobb blokk
 ;
 MSG_NUM_CHUNKS
-BLOKKSZÁM
+Blokkszám
 ;
 MSG_NODE_NAME
-CSOMÓPONTNÉV
+Csomópontnév
 ;
 MSG_MEMORY_SPEED
-MEMÓRIA SEBESSÉG
+Memória sebesség
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-LEMEZHIBÁK SZÁMA
+Lemezhibák száma
 ;
 MSG_UNIT_NUMBER
-EGYSÉG SZÁMA
+Egység száma
 ;
 MSG_DISK_STATE
-LEMEZÁLLAPOT
+Lemezállapot
 ;
 MSG_TOTAL_BLOCKS
-BLOKKOK ÖSSZESEN
+Blokkok összesen
 ;
 MSG_BLOCKS_USED
-HASZNÁLT BLOKKOK
+Használt blokkok
 ;
 MSG_BYTES_PER_BLOCK
-BÁJTOK BLOKKONKÉNT
+Bájtok blokkonként
 ;
 MSG_DISK_TYPE
-MEGHAJTÓTÍPUS
+Meghajtótípus
 ;
 MSG_VOLUME_NAME
-KÖTETNÉV
+Kötetnév
 ;
 MSG_DEVICE_NAME
-ESZKÖZNÉV
+Eszköznév
 ;
 MSG_SURFACES
-FELÜLETEK
+Felületek
 ;
 MSG_SECTORS_PER_SIDE
-SZEKTOROK OLDALANKÉNT
+Szektorok oldalanként
 ;
 MSG_RESERVED_BLOCKS
-FENNTARTOTT BLOKKOK
+Fenntartott blokkok
 ;
 MSG_LOWEST_CYLINDER
-ALSÓ CILINDER
+Alsó cilinder
 ;
 MSG_HIGHEST_CYLINDER
-FELSÖ CILINDER
+Felsö cilinder
 ;
 MSG_NUM_BUFFERS
-PUFFEREK SZÁMA
+Pufferek száma
 ;
 MSG_SPEED
-MEGHAJTÓ SEBESSÉGE
+Meghajtó sebessége
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nem találhatók meghajtók.
@@ -632,9 +632,6 @@ Fat Gary
 MSG_GARY_UNKNOWN
 Ismeretlen
 ;
-MSG_EXT_INFO
-További info A3000/4000-hez
-;
 MSG_NV_RAM
 NV-RAM (BattMem):
 ;
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -927,4 +924,163 @@ Paritásell.
 ;
 MSG_NCR_DOUBLER
 Órajelduplázó
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+Chip ID
+;
+MSG_PCMCIA_CARD
+PCMCIA kártya
+;
+MSG_PCMCIA_SLOT
+PCMCIA hely
+;
+MSG_PCMCIA_ACCESS
+Elérési idõ
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+PPC revízió
+;
+MSG_PPC_BUS
+PPC busz MHz
+;
+MSG_PPC_RUNTIME
+PPC rendszer
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Szoftver
+;
+MSG_HARDWARE_TITLE
+Hardver
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Sebesség
+;
+MSG_MEMORY_TITLE
+Memória
+;
+MSG_DRIVES_TITLE
+Meghajtók
+;
+MSG_BOARDS_TITLE
+Bõvítõkártyák
+;
+MSG_PROJECT_MENU
+Projekt
+;
+MSG_ABOUT
+Névjegy...
+;
+MSG_ABOUT_MUI
+MUI névjegye...
+;
+MSG_RUN_BENCHMARKS
+Tesztek indítása
+;
+MSG_SAVE_REPORT
+Jelentés mentése...
+;
+MSG_QUIT
+Kilépés
+;
+MSG_SETTINGS_MENU
+Beállítások
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Sebességmérés
+;
+MSG_SCSI_DEVICES
+SCSI eszközök...
+;
+MSG_CLOSE
+Bezárás
+;
+MSG_RESULTS_TITLE
+Eredmények
+;
+MSG_NAME
+Név
+;
+MSG_LOCATION
+Hely
+;
+MSG_ADDRESS
+Cím
+;
+MSG_VERSION
+Verzió
+;
+MSG_SIZE
+Méret
+;
+MSG_DRIVE
+Meghajtó
+;
+MSG_VOLUME
+Kötet
+;
+MSG_REPORT_SAVED
+Jelentés mentve: %s
+;
+MSG_REPORT_SAVE_FAILED
+A jelentés mentése sikertelen
+;
+MSG_FONT_INVALID
+Hibás FONT érték. Formátum: FONT=név.méret.
+;
+MSG_FONT_UNAVAILABLE
+A kért betûtípus nem nyitható meg.
+;
+MSG_FONT_TOO_LARGE
+A betûtípus túllépi a 8 x 8 képpontos korlátot.
+;
+MSG_FONT_FALLBACK
+A topaz.8 betûtípus lesz használva.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Jelentés...
+;
+MSG_REPORT_TITLE
+Rendszerjelentés
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Rövid
+;
+MSG_REPORT_FULL
+Teljes
+;
+MSG_REPORT_SAVE_AS
+Mentés másként...
+;
+MSG_REPORT_FAILED
+Nem sikerült létrehozni a jelentés elõnézetét
+;
+MSG_BTN_REPORT
+RIPORT
+;
+MSG_NETWORK
+Hálózat
+;
+MSG_NOT_RUNNING
+nem fut
 ;

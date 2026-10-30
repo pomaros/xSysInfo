@@ -251,8 +251,8 @@ typedef enum {
     MSG_GAYLE,
     MSG_FAT_GARY,
     MSG_GARY_UNKNOWN,
-    MSG_EXT_INFO,
-    MSG_NV_RAM,
+    /* ID 193 is retired; preserve IDs used by existing catalogs. */
+    MSG_NV_RAM = 194,
     MSG_AMNESIA,
     MSG_SHARED_AMNESIA,
     MSG_TIMEOUT,
@@ -346,11 +346,100 @@ typedef enum {
     MSG_NCR_WIDTH,
     MSG_NCR_PARITY,
     MSG_NCR_DOUBLER,
+    MSG_CHIP_ID,
+    MSG_PCMCIA_CARD,
+    MSG_PCMCIA_SLOT,
+    MSG_PCMCIA_ACCESS,
+    MSG_AKIKO_C2P,
+    MSG_PPC_REVISION,
+    MSG_PPC_BUS,
+    MSG_PPC_RUNTIME,
+    MSG_HARDWARE_SCSI,
+    /* General titles, actions and list headings. Append to preserve IDs. */
+    MSG_SOFTWARE_TITLE,
+    MSG_HARDWARE_TITLE,
+    MSG_CHIPSET_TITLE,
+    MSG_SPEED_TITLE,
+    MSG_MEMORY_TITLE,
+    MSG_DRIVES_TITLE,
+    MSG_BOARDS_TITLE,
+    MSG_PROJECT_MENU,
+    MSG_ABOUT,
+    MSG_ABOUT_MUI,
+    MSG_RUN_BENCHMARKS,
+    MSG_SAVE_REPORT,
+    MSG_QUIT,
+    MSG_SETTINGS_MENU,
+    MSG_MUI_SETTINGS,
+    MSG_MEASURE_SPEED,
+    MSG_SCSI_DEVICES,
+    MSG_CLOSE,
+    MSG_RESULTS_TITLE,
+    MSG_NAME,
+    MSG_LOCATION,
+    MSG_ADDRESS,
+    MSG_VERSION,
+    MSG_SIZE,
+    MSG_DRIVE,
+    MSG_VOLUME,
+    MSG_REPORT_SAVED,
+    MSG_REPORT_SAVE_FAILED,
+    MSG_FONT_INVALID,
+    MSG_FONT_UNAVAILABLE,
+    MSG_FONT_TOO_LARGE,
+    MSG_FONT_FALLBACK,
+
+    /* Board details: append to preserve installed catalog IDs. */
+    MSG_BOARD_DETAILS,
+    MSG_BOARD_DETAILS_TITLE,
+    MSG_BOARD_BACK,
+    MSG_BOARD_PCI_CLASS,
+    MSG_BOARD_SYSTEM_MEMORY,
+    MSG_BOARD_MEMORY_SPACE,
+    MSG_BOARD_ROM_VALID,
+    MSG_BOARD_ROM_VECTOR,
+    MSG_BOARD_CHAINED,
+    MSG_BOARD_SHUTUP,
+    MSG_BOARD_ZORRO_III,
+    MSG_BOARD_EXTENDED,
+    MSG_BOARD_SUBSIZE,
+    MSG_BOARD_SIZE_MATCHES,
+    MSG_BOARD_AUTO_SIZE,
+    MSG_BOARD_RESERVED,
+    MSG_BOARD_MEMORY_DEVICE,
+    MSG_BOARD_IO_DEVICE,
+    MSG_BOARD_8MB_SPACE,
+    MSG_BOARD_ANY_SPACE,
+
+    /* Unit is part of the value; keep MSG_ECLOCK_HZ for old catalogs. */
+    MSG_ECLOCK,
+
+    /* Report preview: append to preserve installed catalog IDs. */
+    MSG_REPORT_OPEN,
+    MSG_REPORT_TITLE,
+    MSG_REPORT_WHICH,
+    MSG_REPORT_BRIEF,
+    MSG_REPORT_FULL,
+    MSG_REPORT_SAVE_AS,
+    MSG_REPORT_FAILED,
+    MSG_BTN_REPORT,
+
+    /* System software overview: network stack */
+    MSG_NETWORK,
+    MSG_NOT_RUNNING,
+
     MSG_COUNT  /* Total number of strings */
 } LocaleStringID;
 
 /* Get localized string by ID */
 const char *get_string(LocaleStringID id);
+/* The built-in (English) text, regardless of the open catalog. */
+const char *get_builtin_string(LocaleStringID id);
+/* Catalog text for a stored built-in string of a known message; the
+ * text itself when it is anything else. */
+const char *localize_builtin(const char *text);
+/* While set, get_string() returns built-in text: reports are English. */
+void locale_set_builtin_only(BOOL on);
 
 /* Initialize locale (returns TRUE if successful) */
 BOOL init_locale(void);

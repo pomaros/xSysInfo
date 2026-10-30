@@ -19,10 +19,12 @@ typedef enum {
     BTN_DRIVES,
     BTN_BOARDS,
     BTN_SPEED,
-    BTN_PRINT,
+    BTN_REPORT,
 
     /* Main view toggles */
     BTN_SOFTWARE_CYCLE,     /* Software overview/list cycle */
+    BTN_HARDWARE_PREV,
+    BTN_HARDWARE_NEXT,
     BTN_HARDWARE_CYCLE,     /* Hardwareinfo cycle */
     BTN_SOFTWARE_UP,        /* Software list scroll up */
     BTN_SOFTWARE_DOWN,      /* Software list scroll down */
@@ -57,9 +59,20 @@ typedef enum {
     BTN_BOARD_NEXT,
     BTN_BOARD_DISPLAY,
     BTN_BOARD_EXIT,
+    BTN_BOARD_DETAILS,
+    BTN_BOARD_DETAIL_PREV,
+    BTN_BOARD_DETAIL_COUNTER,
+    BTN_BOARD_DETAIL_NEXT,
+    BTN_BOARD_DETAIL_DISPLAY,
+    BTN_BOARD_DETAIL_BACK,
 
     /* SCSI view button */
     BTN_SCSI_EXIT,
+
+    /* Report preview controls; keep contiguous for drawing. */
+    BTN_REPORT_FORMAT, BTN_REPORT_SAVE, BTN_REPORT_CLOSE,
+    BTN_REPORT_PREV, BTN_REPORT_NEXT,
+    BTN_REPORT_UP, BTN_REPORT_DOWN, BTN_REPORT_SCROLLBAR,
 
     /* Drive selection buttons - MUST be last as they use sequential IDs */
     BTN_DRV_DRIVE_BASE,
@@ -120,6 +133,10 @@ typedef struct {
 
 /* Function prototypes */
 
+/* Classic display drawing resources. */
+BOOL init_drawing(void);
+void cleanup_drawing(void);
+
 /* Main drawing functions */
 void draw_main_view(void);
 void draw_memory_view(void);
@@ -152,6 +169,8 @@ void draw_single_bar(WORD x, WORD y, ULONG value, ULONG max_value, WORD color);
 
 /* Scroll bar drawing */
 void draw_scroll_arrow(WORD x, WORD y, WORD w, WORD h, BOOL up, BOOL pressed);
+void scrollbar_knob(WORD h, ULONG pos, ULONG total, ULONG visible,
+                    WORD *knob_y, WORD *knob_h);
 void draw_scroll_bar(WORD x, WORD y, WORD w, WORD h, ULONG pos, ULONG total, ULONG visible);
 
 /* Event handling */
@@ -160,7 +179,6 @@ void handle_button_press(ButtonID btn);
 void handle_scrollbar_click(WORD mx, WORD my);
 
 /* Button state management */
-void init_buttons(void);
 void update_button_states(void);
 void add_button(WORD x, WORD y, WORD w, WORD h, const char *label, ButtonID id, BOOL enabled);
 Button *find_button(ButtonID id);
